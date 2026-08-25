@@ -21,6 +21,14 @@ Smart contracts, staking, sharding, bridges, and Layer 2 are out of scope.
 
 GitHub gives you the **program**. Mining on the **same chain** as everyone else requires connecting to a bootstrap (seed) node. If you start without `--peers`, you are on a private fork.
 
+**Current public seed (keep this node running 24/7):**
+
+```text
+ws://57.128.203.234:6001
+```
+
+REST API (wallet / balance): `http://57.128.203.234:3001`
+
 ### 1. Clone
 
 ```bash
@@ -47,16 +55,10 @@ Keep this process running. Open **TCP 6001** (P2P) and **TCP 3001** (REST) on th
 npm run start -- --port 3001 --p2p-port 6001 --data-dir data/seed --mine --miner-address sph1YOUR_ADDRESS
 ```
 
-Publish this bootstrap URL to miners (replace host with your public IP or DNS):
-
-```text
-ws://YOUR_PUBLIC_HOST:6001
-```
-
 ### 4. Mine on the shared chain (everyone else)
 
 ```bash
-npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1YOUR_ADDRESS --peers ws://YOUR_PUBLIC_HOST:6001
+npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1YOUR_ADDRESS --peers ws://57.128.203.234:6001
 ```
 
 Block rewards (50 SPH, halving every 210_000 blocks) go to `--miner-address`. Target block time is 10 minutes.
