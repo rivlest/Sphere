@@ -57,24 +57,24 @@ export const DEFAULT_CONFIG: ChainConfig = {
   blockVersion: 1,
   // 3 leading hex zeros ≈ 4,096 hashes on average — fast locally, still a real PoW check.
   initialDifficulty: 3,
-  targetBlockTimeMs: 60_000,
+  targetBlockTimeMs: 600_000,
   difficultyAdjustmentInterval: 10,
   maxDifficultyChangeFactor: 4,
   maxTransactionsPerBlock: 500,
   mempoolTtlMs: 60 * 60 * 1000,
   initialRewardOrbs: 50 * ORBS_PER_SPH,
-  halvingInterval: 1000,
+  halvingInterval: 210_000,
   // 2024-01-01T00:00:00.000Z — fixed genesis time (PoW is not required for index 0).
   genesisTimestamp: 1_704_067_200_000,
   maxFutureBlockSkewMs: 2 * 60 * 1000,
 };
 
 /**
- * Known faucet private key for the local development network.
- * This key is PUBLIC and MUST NOT be used outside local testing.
+ * Genesis coinbase recipient (public address only).
+ * The matching private key must never appear in this repository.
  */
-export const DEV_PRIVATE_KEY_HEX =
-  'c2c4b8e6a1d3f5e7b9c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9e1f3a5';
+export const GENESIS_COINBASE_ADDRESS =
+  'sph1d0301dcf451b9ecd36a431234b5460ad0f809158';
 
 export type MessageType =
   | 'NEW_BLOCK'

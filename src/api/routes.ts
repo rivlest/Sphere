@@ -111,8 +111,19 @@ export function createRoutes(node: SphereNode): Router {
     }
   });
 
+  router.post('/faucet', (req, res) => {
+    try {
+      const address = req.body?.address;
+      const amount = Number(req.body?.amountOrbs ?? 100_000_000);
+      const tx = node.dripFaucet(address, amount);
+      res.status(201).json({ accepted: true, hash: tx.hash });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   router.get('/peers', (_req, res) => {
-    res.json({ peers: node.p2p.getPeerUrls() });
+    res.json({ peers: node.getKnownPeers() });
   });
 
   router.post('/peers', async (req, res) => {
@@ -123,7 +134,7 @@ export function createRoutes(node: SphereNode): Router {
         return;
       }
       await node.addPeer(address);
-      res.status(201).json({ ok: true, peers: node.p2p.getPeerUrls() });
+      res.status(201).json({ ok: true, peers: node.getKnownPeers() });
     } catch (error) {
       sendError(res, error);
     }

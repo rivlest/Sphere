@@ -1,7 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { DEV_PRIVATE_KEY_HEX } from '../src/types.js';
 import { createSignedTransaction } from '../src/core/transaction.js';
-import { createWallet, walletFromPrivateKey } from '../src/wallet/wallet.js';
+import { createWallet } from '../src/wallet/wallet.js';
 import { startTestNode, waitFor } from './helpers.js';
 import type { SphereNode } from '../src/node.js';
 
@@ -13,7 +12,8 @@ afterEach(async () => {
 
 describe('multi-node integration', () => {
   it('synchronizes blocks and transactions across three local nodes', async () => {
-    const nodeA = await startTestNode();
+    const miner = createWallet();
+    const nodeA = await startTestNode({ minerAddress: miner.address });
     nodes.push(nodeA);
 
     const mined = await nodeA.mineOneBlock();
@@ -27,17 +27,16 @@ describe('multi-node integration', () => {
     await waitFor(() => nodeB.blockchain.height >= 1);
     expect(nodeB.blockchain.latestBlock.hash).toBe(nodeA.blockchain.latestBlock.hash);
 
-    const faucet = walletFromPrivateKey(DEV_PRIVATE_KEY_HEX);
     const alice = createWallet();
     const tx = createSignedTransaction(
       {
-        from: faucet.address,
+        from: miner.address,
         to: alice.address,
         amount: 5_000_000,
         fee: 1000,
         nonce: 1,
       },
-      faucet.privateKey,
+      miner.privateKey,
     );
     nodeA.submitTransaction(tx);
 

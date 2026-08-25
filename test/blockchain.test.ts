@@ -4,8 +4,7 @@ import { createGenesisBlock, faucetAddress } from '../src/core/genesis.js';
 import { createSignedTransaction } from '../src/core/transaction.js';
 import { createCandidateBlock } from '../src/core/block.js';
 import { mineBlock } from '../src/core/proofOfWork.js';
-import { walletFromPrivateKey, createWallet } from '../src/wallet/wallet.js';
-import { DEV_PRIVATE_KEY_HEX } from '../src/types.js';
+import { createWallet } from '../src/wallet/wallet.js';
 import { JsonFileChainStore } from '../src/storage/persistence.js';
 import { Mempool } from '../src/mempool/mempool.js';
 import { ValidationError } from '../src/core/errors.js';
@@ -31,29 +30,30 @@ describe('blockchain', () => {
 
   it('applies a signed transfer and collects the fee in the coinbase', async () => {
     const chain = new Blockchain(TEST_CONFIG);
-    const faucet = walletFromPrivateKey(DEV_PRIVATE_KEY_HEX);
+    const sender = createWallet();
     const alice = createWallet();
     const miner = createWallet();
+    await mineEmptyBlock(chain, sender.address);
     const tx = createSignedTransaction(
       {
-        from: faucet.address,
+        from: sender.address,
         to: alice.address,
         amount: 1_000_000,
         fee: 2_000,
         nonce: 1,
       },
-      faucet.privateKey,
+      sender.privateKey,
     );
     const candidate = createCandidateBlock(chain, miner.address, [tx]);
     const mined = await mineBlock(candidate.header);
     chain.addBlock({ ...candidate, header: mined.header, hash: mined.hash });
 
     expect(chain.getAccount(alice.address).balance).toBe(1_000_000);
-    expect(chain.getAccount(faucet.address).balance).toBe(
+    expect(chain.getAccount(sender.address).balance).toBe(
       TEST_CONFIG.initialRewardOrbs - 1_000_000 - 2_000,
     );
     expect(chain.getAccount(miner.address).balance).toBe(TEST_CONFIG.initialRewardOrbs + 2_000);
-    expect(chain.getAccount(faucet.address).nonce).toBe(1);
+    expect(chain.getAccount(sender.address).nonce).toBe(1);
   });
 
   it('raises difficulty after 10 blocks mined far faster than the target', async () => {
@@ -89,20 +89,21 @@ describe('blockchain', () => {
 });
 
 describe('mempool', () => {
-  it('rejects duplicates and coinbase transactions', () => {
+  it('rejects duplicates and coinbase transactions', async () => {
     const chain = new Blockchain(TEST_CONFIG);
     const pool = new Mempool(60_000);
-    const faucet = walletFromPrivateKey(DEV_PRIVATE_KEY_HEX);
+    const sender = createWallet();
+    await mineEmptyBlock(chain, sender.address);
     const alice = createWallet();
     const tx = createSignedTransaction(
       {
-        from: faucet.address,
+        from: sender.address,
         to: alice.address,
         amount: 10,
         fee: 1,
         nonce: 1,
       },
-      faucet.privateKey,
+      sender.privateKey,
     );
     pool.add(
       tx,

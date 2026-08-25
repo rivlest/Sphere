@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEV_PRIVATE_KEY_HEX } from '../src/types.js';
 import { faucetAddress } from '../src/core/genesis.js';
 import {
   createSignedTransaction,
   hashTransaction,
   validateTransaction,
 } from '../src/core/transaction.js';
-import { createWallet, walletFromPrivateKey } from '../src/wallet/wallet.js';
+import { createWallet } from '../src/wallet/wallet.js';
 import { isValidAddress } from '../src/wallet/keys.js';
 import { ValidationError } from '../src/core/errors.js';
 
@@ -18,23 +17,23 @@ describe('wallets and transactions', () => {
     expect(wallet.address).toHaveLength(44);
   });
 
-  it('round-trips the faucet key to the genesis address', () => {
-    const faucet = walletFromPrivateKey(DEV_PRIVATE_KEY_HEX);
-    expect(faucet.address).toBe(faucetAddress());
+  it('credits genesis coinbase to the published address, without a source private key', () => {
+    expect(isValidAddress(faucetAddress())).toBe(true);
+    expect(faucetAddress()).toBe('sph1d0301dcf451b9ecd36a431234b5460ad0f809158');
   });
 
   it('signs and verifies a transaction', () => {
-    const faucet = walletFromPrivateKey(DEV_PRIVATE_KEY_HEX);
+    const sender = createWallet();
     const alice = createWallet();
     const tx = createSignedTransaction(
       {
-        from: faucet.address,
+        from: sender.address,
         to: alice.address,
         amount: 1_000_000,
         fee: 1000,
         nonce: 1,
       },
-      faucet.privateKey,
+      sender.privateKey,
     );
     expect(tx.hash).toBe(hashTransaction(tx));
     expect(tx.signature).toHaveLength(130);
@@ -42,17 +41,17 @@ describe('wallets and transactions', () => {
   });
 
   it('rejects an amount that is not a positive integer of Orbs', () => {
-    const faucet = walletFromPrivateKey(DEV_PRIVATE_KEY_HEX);
+    const sender = createWallet();
     const alice = createWallet();
     const tx = createSignedTransaction(
       {
-        from: faucet.address,
+        from: sender.address,
         to: alice.address,
         amount: 1,
         fee: 0,
         nonce: 1,
       },
-      faucet.privateKey,
+      sender.privateKey,
     );
     tx.amount = 1.5;
     expect(() => validateTransaction(tx, () => ({ balance: 100, nonce: 0 }))).toThrow(
@@ -61,17 +60,17 @@ describe('wallets and transactions', () => {
   });
 
   it('rejects a bad signature', () => {
-    const faucet = walletFromPrivateKey(DEV_PRIVATE_KEY_HEX);
+    const sender = createWallet();
     const alice = createWallet();
     const tx = createSignedTransaction(
       {
-        from: faucet.address,
+        from: sender.address,
         to: alice.address,
         amount: 1,
         fee: 0,
         nonce: 1,
       },
-      faucet.privateKey,
+      sender.privateKey,
     );
     tx.signature = '00'.repeat(65);
     expect(() => validateTransaction(tx, () => ({ balance: 100, nonce: 0 }))).toThrow(
@@ -80,17 +79,17 @@ describe('wallets and transactions', () => {
   });
 
   it('rejects a replayed nonce and overspending', () => {
-    const faucet = walletFromPrivateKey(DEV_PRIVATE_KEY_HEX);
+    const sender = createWallet();
     const alice = createWallet();
     const tx = createSignedTransaction(
       {
-        from: faucet.address,
+        from: sender.address,
         to: alice.address,
         amount: 50,
         fee: 1,
         nonce: 1,
       },
-      faucet.privateKey,
+      sender.privateKey,
     );
     expect(() => validateTransaction(tx, () => ({ balance: 100, nonce: 1 }))).toThrow(
       /Invalid nonce/,

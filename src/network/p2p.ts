@@ -28,6 +28,14 @@ export class P2PNetwork extends EventEmitter {
     this.advertisedUrl = url;
   }
 
+  getAdvertisedUrl(): string | undefined {
+    return this.advertisedUrl;
+  }
+
+  getOutboundUrls(): string[] {
+    return [...this.outbound];
+  }
+
   get peerCount(): number {
     return this.peers.size;
   }
@@ -62,6 +70,7 @@ export class P2PNetwork extends EventEmitter {
     const normalized = normalizePeerUrl(url);
     if (this.advertisedUrl && normalizePeerUrl(this.advertisedUrl) === normalized) return;
     if (this.outbound.has(normalized)) return;
+    if (this.outbound.size >= 16) return;
     this.outbound.add(normalized);
 
     await new Promise<void>((resolve, reject) => {
@@ -74,8 +83,6 @@ export class P2PNetwork extends EventEmitter {
       socket.once('open', () => {
         socket.off('error', onError);
         this.attach(socket, normalized);
-        this.sendTo(socket, { type: 'QUERY_CHAIN' });
-        this.sendTo(socket, { type: 'QUERY_PEERS' });
         resolve();
       });
     });
@@ -131,6 +138,7 @@ export class P2PNetwork extends EventEmitter {
     socket.on('error', () => {
       socket.close();
     });
+    this.emit('peerOpen', peer);
   }
 
   private dispatch(message: P2PMessage, from: PeerSocket): void {

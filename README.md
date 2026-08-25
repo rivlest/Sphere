@@ -19,7 +19,9 @@ Smart contracts, staking, sharding, bridges, and Layer 2 are out of scope.
 
 ## Join the network and mine SPH
 
-GitHub gives you the **program**. Mining on the **same chain** as everyone else requires connecting to a bootstrap (seed) node. If you start without `--peers`, you are on a private fork.
+GitHub gives you the **program**. Nodes dial a **seed list** (compiled default plus `--peers`), then gossip `QUERY_PEERS` / `RESPONSE_PEERS` (`addr`) and remember peers in `peers.json`. If you start with `--no-default-seeds` and no `--peers`, you are on a private fork.
+
+A WebSocket node only receives inbound connections if it **listens** on a public IP (or forwarded port) — the same split as Bitcoin listening vs outbound-only nodes. Most miners only dial out to seeds.
 
 **Current public seed (keep this node running 24/7):**
 
@@ -106,8 +108,9 @@ npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1<your-ad
 | ----------------- | -------------------------------------------------- |
 | `--port`          | REST API port (default `3001`)                     |
 | `--p2p-port`      | WebSocket P2P port (default `6001`)                |
-| `--peers`         | Comma-separated bootstrap peers (`ws://host:port`) |
-| `--p2p-url`       | Public `ws://host:port` advertised to other nodes  |
+| `--peers`            | Extra bootstrap peers (`ws://host:port`, comma-separated) |
+| `--no-default-seeds` | Do not dial the compiled seed list                        |
+| `--p2p-url`          | Public `ws://host:port` advertised to other nodes         |
 | `--mine`          | Mine empty and mempool blocks in a loop            |
 | `--miner-address` | Coinbase recipient (`sph1…`)                       |
 | `--data-dir`      | Snapshot directory (default `data`)                |
@@ -149,30 +152,15 @@ npm run wallet -- send --wallet wallets/alice.json --to sph1… --amount 1.5 --f
 
 Amounts on the CLI are **SPH decimal strings** converted to integer Orbs. The node never stores SPH as a floating-point value.
 
-### Faucet (local testing only)
+### Faucet
 
-Genesis pays **50 SPH** to the faucet derived from `DEV_PRIVATE_KEY_HEX` in `src/types.ts`:
+Genesis still credits **50 SPH** to the historical coinbase address:
 
 `sph1d0301dcf451b9ecd36a431234b5460ad0f809158`
 
-That private key is **public** and must never be reused outside this local network.
+The private key for that address is **not** in this repository. Optional test drips (if an operator enables them) use `SPHERE_FAUCET_PRIVATE_KEY` in the environment only, with a per-address daily cap (`POST /faucet`).
 
-To spend genesis coins, save a wallet JSON:
-
-```json
-{
-  "privateKey": "c2c4b8e6a1d3f5e7b9c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9e1f3a5"
-}
-```
-
-Then:
-
-```bash
-npm run wallet -- balance --wallet wallets/faucet.json --node http://127.0.0.1:3001
-npm run wallet -- send --wallet wallets/faucet.json --to sph1<alice> --amount 1 --fee 0.0001 --node http://127.0.0.1:3001
-```
-
-Watch the recipient:
+Watch a recipient:
 
 ```bash
 npm run wallet -- balance --address sph1<alice> --node http://127.0.0.1:3001
@@ -203,6 +191,7 @@ The SPA talks to the node REST API (`VITE_SPHERE_NODE_URL`, default `http://127.
 | GET    | `/price`                 | Simulated SPH/USD demo feed (not a real market)          |
 | GET    | `/transactions/:address` | Confirmed + mempool transfers for an address             |
 | POST   | `/transactions`          | Submit a signed transaction                              |
+| POST   | `/faucet`                | Optional test drip (`SPHERE_FAUCET_PRIVATE_KEY`)         |
 | GET    | `/peers`                 | Connected peer URLs                                      |
 | POST   | `/peers`                 | `{ "address": "ws://host:port" }`                        |
 

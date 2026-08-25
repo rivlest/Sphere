@@ -42,6 +42,7 @@ export async function startTestNode(
     mine: false,
     minerAddress: faucetAddress(),
     silent: true,
+    useDefaultSeeds: false,
     config: TEST_CONFIG,
     ...overrides,
   });

@@ -9,7 +9,8 @@ program
   .description('Sphere Proof-of-Work node')
   .option('--port <number>', 'REST API port', '3001')
   .option('--p2p-port <number>', 'P2P WebSocket port', '6001')
-  .option('--peers <urls>', 'comma-separated bootstrap peer URLs', '')
+  .option('--peers <urls>', 'comma-separated extra peer URLs (merged with the default seed list)', '')
+  .option('--no-default-seeds', 'do not dial the compiled seed list')
   .option('--p2p-url <url>', 'public WebSocket URL advertised to peers, e.g. ws://1.2.3.4:6001')
   .option('--mine', 'mine blocks continuously')
   .option('--miner-address <address>', 'address that receives block rewards')
@@ -21,6 +22,7 @@ const opts = program.opts<{
   p2pPort: string;
   peers: string;
   p2pUrl?: string;
+  defaultSeeds?: boolean;
   mine: boolean;
   minerAddress?: string;
   dataDir: string;
@@ -41,6 +43,7 @@ const node = new SphereNode({
   p2pPort: Number(opts.p2pPort),
   peers,
   advertisedP2pUrl: opts.p2pUrl,
+  useDefaultSeeds: opts.defaultSeeds !== false,
   mine: Boolean(opts.mine),
   minerAddress: opts.minerAddress,
   dataDir: opts.dataDir,

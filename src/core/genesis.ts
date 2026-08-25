@@ -1,5 +1,9 @@
-import { DEFAULT_CONFIG, DEV_PRIVATE_KEY_HEX, type Block, type ChainConfig } from '../types.js';
-import { addressFromPrivateKey } from '../wallet/keys.js';
+import {
+  DEFAULT_CONFIG,
+  GENESIS_COINBASE_ADDRESS,
+  type Block,
+  type ChainConfig,
+} from '../types.js';
 import { createCoinbaseTransaction } from './transaction.js';
 import { merkleRoot } from './merkle.js';
 import { hashBlockHeader } from './proofOfWork.js';
@@ -7,8 +11,9 @@ import { blockRewardOrbs } from './units.js';
 
 export const GENESIS_PREVIOUS_HASH = '0'.repeat(64);
 
+/** Public genesis coinbase address. No private key is shipped in source. */
 export function faucetAddress(): string {
-  return addressFromPrivateKey(DEV_PRIVATE_KEY_HEX);
+  return GENESIS_COINBASE_ADDRESS;
 }
 
 export function createGenesisBlock(config: ChainConfig = DEFAULT_CONFIG): Block {
