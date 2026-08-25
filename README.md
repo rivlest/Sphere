@@ -17,6 +17,67 @@ Smart contracts, staking, sharding, bridges, and Layer 2 are out of scope.
 
 - Node.js 20 or newer
 
+## Join the network and mine SPH
+
+GitHub gives you the **program**. Mining on the **same chain** as everyone else requires connecting to a bootstrap (seed) node. If you start without `--peers`, you are on a private fork.
+
+### 1. Clone
+
+```bash
+git clone https://github.com/rivlest/Sphere.git
+cd Sphere
+npm install
+```
+
+If this URL 404s, use the GitHub page of the fork you actually cloned.
+
+### 2. Create a wallet (your mining address)
+
+```bash
+npm run wallet -- generate --out wallets/moj.json
+```
+
+Copy the `sph1…` address from that file. Keep `wallets/moj.json` private (it is gitignored).
+
+### 3. Start a seed node (maintainer / VPS)
+
+Keep this process running. Open **TCP 6001** (P2P) and **TCP 3001** (REST) on the firewall/router.
+
+```bash
+npm run start -- --port 3001 --p2p-port 6001 --data-dir data/seed --mine --miner-address sph1YOUR_ADDRESS
+```
+
+Publish this bootstrap URL to miners (replace host with your public IP or DNS):
+
+```text
+ws://YOUR_PUBLIC_HOST:6001
+```
+
+### 4. Mine on the shared chain (everyone else)
+
+```bash
+npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1YOUR_ADDRESS --peers ws://YOUR_PUBLIC_HOST:6001
+```
+
+Block rewards (50 SPH, halving every 210_000 blocks) go to `--miner-address`. Target block time is 10 minutes.
+
+Check that you joined the same tip:
+
+```bash
+curl http://127.0.0.1:3001/status
+```
+
+`height` should catch up to the seed. `peers` should be at least 1.
+
+### 5. Send and receive
+
+```bash
+npm run wallet -- balance --wallet wallets/moj.json --node http://127.0.0.1:3001
+npm run wallet -- send --wallet wallets/moj.json --to sph1RECIPIENT --amount 1 --fee 0.0001 --node http://127.0.0.1:3001
+```
+
+Transfers confirm when any miner includes them in a block.
+
 ## Setup
 
 ```bash
