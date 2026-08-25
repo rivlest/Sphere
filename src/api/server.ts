@@ -1,3 +1,4 @@
+import cors from 'cors';
 import express, { type Express } from 'express';
 import type { Server } from 'node:http';
 import { mountRoutes } from './routes.js';
@@ -8,13 +9,8 @@ export async function startApiServer(
   port: number,
 ): Promise<{ app: Express; server: Server; port: number }> {
   const app = express();
+  app.use(cors());
   app.use(express.json({ limit: '1mb' }));
-  app.use((_req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    next();
-  });
   mountRoutes(app, node);
 
   const server = await new Promise<Server>((resolve, reject) => {

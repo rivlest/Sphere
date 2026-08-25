@@ -5,6 +5,7 @@ import type { SphereNode } from '../node.js';
 import { isValidAddress } from '../wallet/keys.js';
 import { formatOrbsToSph } from '../core/units.js';
 import { NETWORK_NAME, TICKER } from '../types.js';
+import { simulatedPrice } from './simulatedPrice.js';
 
 export function createRoutes(node: SphereNode): Router {
   const router = Router();
@@ -67,6 +68,38 @@ export function createRoutes(node: SphereNode): Router {
 
   router.get('/mempool', (_req, res) => {
     res.json({ transactions: node.mempool.getAll() });
+  });
+
+  router.get('/price', (_req, res) => {
+    res.json(simulatedPrice.snapshot());
+  });
+
+  router.get('/transactions/:address', (req, res) => {
+    const { address } = req.params;
+    if (!isValidAddress(address)) {
+      res.status(400).json({ error: 'Invalid address' });
+      return;
+    }
+    const limit = Math.min(parseInteger(req.query.limit, 50), 200);
+    const confirmed = [];
+    for (const block of node.blockchain.getBlocks()) {
+      for (const tx of block.transactions) {
+        if (tx.from === address || tx.to === address) {
+          confirmed.push({
+            ...tx,
+            status: 'confirmed' as const,
+            blockHeight: block.header.index,
+            blockHash: block.hash,
+          });
+        }
+      }
+    }
+    const pending = node.mempool
+      .getAll()
+      .filter((tx) => tx.from === address || tx.to === address)
+      .map((tx) => ({ ...tx, status: 'pending' as const }));
+    const transactions = [...pending, ...confirmed.reverse()].slice(0, limit);
+    res.json({ address, transactions });
   });
 
   router.post('/transactions', (req, res) => {
