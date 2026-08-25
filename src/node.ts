@@ -18,6 +18,8 @@ export interface NodeOptions {
   peers?: string[];
   mine?: boolean;
   minerAddress?: string;
+  /** Public `ws://host:port` advertised to peers. Defaults to localhost. */
+  advertisedP2pUrl?: string;
   dataDir: string;
   config?: Partial<ChainConfig>;
   store?: ChainStore;
@@ -64,13 +66,15 @@ export class SphereNode {
     this.bindP2P();
 
     this.p2pPort = await this.p2p.listen(this.options.p2pPort);
-    this.p2p.setAdvertisedUrl(`ws://127.0.0.1:${this.p2pPort}`);
+    const advertised =
+      this.options.advertisedP2pUrl?.replace(/\/$/, '') ?? `ws://127.0.0.1:${this.p2pPort}`;
+    this.p2p.setAdvertisedUrl(advertised);
     const api = await startApiServer(this, this.options.httpPort);
     this.httpServer = api.server;
     this.httpPort = api.port;
 
     this.log(`REST API on http://127.0.0.1:${this.httpPort}`);
-    this.log(`P2P on ws://127.0.0.1:${this.p2pPort}`);
+    this.log(`P2P on ${advertised}`);
     this.log(`height=${this.blockchain.height} difficulty=${this.blockchain.difficulty}`);
 
     for (const peer of this.bootstrapPeers) {

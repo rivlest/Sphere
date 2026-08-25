@@ -49,11 +49,21 @@ Copy the `sph1…` address from that file. Keep `wallets/moj.json` private (it i
 
 ### 3. Start a seed node (maintainer / VPS)
 
-Keep this process running. Open **TCP 6001** (P2P) and **TCP 3001** (REST) on the firewall/router.
+Keep this process running. Open **TCP 6001** (P2P) and **TCP 3001** (REST) on the firewall/router. Advertise the public P2P URL so other nodes do not receive `ws://127.0.0.1`.
 
 ```bash
-npm run start -- --port 3001 --p2p-port 6001 --data-dir data/seed --mine --miner-address sph1YOUR_ADDRESS
+npm run start -- --port 3001 --p2p-port 6001 --data-dir data/seed --mine --miner-address sph1YOUR_ADDRESS --p2p-url ws://57.128.203.234:6001
 ```
+
+Wait a few seconds after start — `curl` to port 3001 can fail while Node is still booting.
+
+Anyone can check the live seed (no SSH):
+
+```bash
+curl http://57.128.203.234:3001/status
+```
+
+On the seed, `"peers": 0` is normal until someone else connects. `"mining": true` and a rising `height` mean the node is up.
 
 ### 4. Mine on the shared chain (everyone else)
 
@@ -63,13 +73,13 @@ npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1YOUR_ADD
 
 Block rewards (50 SPH, halving every 210_000 blocks) go to `--miner-address`. Target block time is 10 minutes.
 
-Check that you joined the same tip:
+After your node starts, check that you joined the same tip:
 
 ```bash
 curl http://127.0.0.1:3001/status
 ```
 
-`height` should catch up to the seed. `peers` should be at least 1.
+Your `height` should catch up to the seed. On **your** node `peers` should be at least 1 (you are connected to the seed). The seed still shows `peers: 0` until that handshake completes — then it increments.
 
 ### 5. Send and receive
 
@@ -97,6 +107,7 @@ npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1<your-ad
 | `--port`          | REST API port (default `3001`)                     |
 | `--p2p-port`      | WebSocket P2P port (default `6001`)                |
 | `--peers`         | Comma-separated bootstrap peers (`ws://host:port`) |
+| `--p2p-url`       | Public `ws://host:port` advertised to other nodes  |
 | `--mine`          | Mine empty and mempool blocks in a loop            |
 | `--miner-address` | Coinbase recipient (`sph1…`)                       |
 | `--data-dir`      | Snapshot directory (default `data`)                |

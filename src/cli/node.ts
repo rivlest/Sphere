@@ -10,6 +10,7 @@ program
   .option('--port <number>', 'REST API port', '3001')
   .option('--p2p-port <number>', 'P2P WebSocket port', '6001')
   .option('--peers <urls>', 'comma-separated bootstrap peer URLs', '')
+  .option('--p2p-url <url>', 'public WebSocket URL advertised to peers, e.g. ws://1.2.3.4:6001')
   .option('--mine', 'mine blocks continuously')
   .option('--miner-address <address>', 'address that receives block rewards')
   .option('--data-dir <path>', 'JSON snapshot directory', 'data')
@@ -19,6 +20,7 @@ const opts = program.opts<{
   port: string;
   p2pPort: string;
   peers: string;
+  p2pUrl?: string;
   mine: boolean;
   minerAddress?: string;
   dataDir: string;
@@ -38,6 +40,7 @@ const node = new SphereNode({
   httpPort: Number(opts.port),
   p2pPort: Number(opts.p2pPort),
   peers,
+  advertisedP2pUrl: opts.p2pUrl,
   mine: Boolean(opts.mine),
   minerAddress: opts.minerAddress,
   dataDir: opts.dataDir,
