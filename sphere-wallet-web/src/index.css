@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #070b14;
+  color: #d7e3f4;
+  font-family: Outfit, 'Segoe UI', sans-serif;
+  background-image:
+    radial-gradient(ellipse 80% 55% at 50% -10%, rgba(94, 234, 212, 0.16), transparent 60%),
+    radial-gradient(ellipse 50% 40% at 100% 0%, rgba(129, 140, 248, 0.14), transparent 55%),
+    radial-gradient(ellipse 45% 35% at 0% 100%, rgba(14, 165, 233, 0.1), transparent 50%);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.card {
+  @apply rounded-2xl border border-white/10 bg-panel/80 p-5 shadow-glow backdrop-blur-md;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition
+    disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.btn-primary {
+  @apply btn bg-orb text-night hover:bg-cyan-200;
+}
+
+.btn-secondary {
+  @apply btn border border-white/15 bg-white/5 text-ink hover:bg-white/10;
+}
+
+.btn-danger {
+  @apply btn border border-danger/30 bg-danger/10 text-danger hover:bg-danger/20;
+}
+
+.field {
+  @apply w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2.5 font-mono text-sm text-ink
+    outline-none ring-orb/40 placeholder:text-mute/70 focus:border-orb/40 focus:ring-2;
+}
+
+.label {
+  @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-mute;
+}
