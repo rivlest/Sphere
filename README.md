@@ -27,9 +27,18 @@ Start a node, then:
 curl http://127.0.0.1:3001/status
 ```
 
-You should see JSON with `"name": "Sphere"`, a `height`, `bits`, and `latestHash`. Rising `height` means blocks are being found. `"peers": 0` is normal until another Sphere node is found (same LAN, `--peers`, or DHT).
+You should see JSON with `"name": "Sphere"`, a `height`, `bits`, and `latestHash`. Rising `height` means blocks are being found.
 
-The chain lives on every node’s disk (`data/` or `--data-dir`). There is no required VPS. If one machine goes offline, others keep the same blocks.
+The public seed `ws://57.128.203.234:6001` is the bootstrap **until** miners form a mesh. Check `"meshReady"`:
+
+- On the seed: `true` when at least 3 miners are connected
+- On your miner: `true` when you reach at least 2 other Sphere nodes besides the seed
+
+Keep the VPS on until miners show `"meshReady": true`. Then the same chain continues without it.
+
+```bash
+curl http://57.128.203.234:3001/status
+```
 
 ---
 
@@ -248,6 +257,14 @@ Add that `ws://…` URL to [`bootstrap-peers.json`](bootstrap-peers.json) if you
 
 `--no-default-seeds` plus no `--peers` starts a **private fork**, not the public chain.
 
+Update the current seed **without wiping the chain** (no mining; relay for miners):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rivlest/Sphere/master/scripts/update-public-seed.sh | bash
+```
+
+Do **not** run `reset-public-seed.sh` unless you intend to delete the live chain.
+
 ### Two nodes on one computer
 
 Use **different** REST ports, P2P ports, and data dirs. The node also binds **P2P TCP on `p2p-port + 1`**, so do not pick 6002 for the second node if the first already uses 6001 (that TCP port is taken).
@@ -293,7 +310,7 @@ Base URL: your node (`http://127.0.0.1:3001`).
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/status` | Height, `bits`, work (`difficulty`), peers, mining, tip hash |
+| GET | `/status` | Height, `bits`, work, peers, `meshPeers`, `meshReady`, mining, tip hash |
 | GET | `/blocks?from=&limit=` | Paginated blocks |
 | GET | `/blocks/:hashOrHeight` | One block |
 | GET | `/balance/:address` | Spendable UTXOs (Orbs + SPH) |
@@ -332,7 +349,8 @@ CORS is enabled so the browser wallet can call a local node.
 | `destination path 'Sphere' already exists` | Do not clone again. `cd $env:USERPROFILE\Desktop\Sphere` |
 | `npm install` fails on `argon2` | 64-bit OS? Node 20+? Then install C build tools (Windows: “Desktop development with C++”) and retry |
 | `curl` to `:3001` fails | Wait 10s after start; check the node window for errors; is another app using 3001? |
-| `peers`: 0 | Wait; same LAN uses mDNS. Across the internet use `--peers ws://host:6001` or `--p2p-url`. After one connect, see `data/peers.json` |
+| `peers`: 0 | Wait; default seed is `ws://57.128.203.234:6001`. Same LAN uses mDNS. After one connect, see `data/peers.json` |
+| `meshReady`: false | Not enough miner-to-miner links yet. Leave the VPS on. |
 | `height` never matches a friend | Different data dirs / old `data/` — stop, delete that dir, start again. Or you used `--no-default-seeds` |
 | Balance is 0 | No coins yet. Mine with the same `sph1` as `--miner-address`, or get a transfer |
 | `curl` / wallet cannot reach `:3001` | Start `npm run start` in another terminal, or pass `--node` to a running node |

@@ -14,13 +14,16 @@ export function createRoutes(node: SphereNode): Router {
 
   router.get('/status', (_req, res) => {
     const latest = node.blockchain.latestBlock;
+    const mesh = node.getMeshStatus();
     res.json({
       name: NETWORK_NAME,
       symbol: TICKER,
       height: node.blockchain.height,
       bits: node.blockchain.bits,
       difficulty: node.blockchain.difficulty,
-      peers: node.p2p.peerCount,
+      peers: mesh.peers,
+      meshPeers: mesh.meshPeers,
+      meshReady: mesh.meshReady,
       mining: node.isMining,
       mempool: node.mempool.size,
       latestHash: latest.hash,

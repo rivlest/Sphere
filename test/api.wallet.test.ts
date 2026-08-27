@@ -29,6 +29,16 @@ describe('wallet-facing REST API', () => {
     expect(res.headers.get('access-control-allow-origin')).toBeTruthy();
   });
 
+  it('reports meshReady false when the node has no Sphere peers', async () => {
+    const node = await startTestNode();
+    nodes.push(node);
+    const res = await fetch(`http://127.0.0.1:${node.httpPort}/status`);
+    const body = await readJson<{ meshReady: boolean; meshPeers: number; peers: number }>(res);
+    expect(body.meshReady).toBe(false);
+    expect(body.meshPeers).toBe(0);
+    expect(body.peers).toBe(0);
+  });
+
   it('returns spendable UTXOs on GET /balance/:address', async () => {
     const node = await startTestNode();
     nodes.push(node);

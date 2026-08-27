@@ -19,6 +19,7 @@ import type { Connection, PeerId, PrivateKey, Stream } from '@libp2p/interface';
 import type { P2PMessage } from '../types.js';
 import { decodeMessage, encodeMessage } from './messages.js';
 import { sphereDiscoveryCid } from './discovery.js';
+import { isGossipablePeerAddress } from './gossip.js';
 import {
   listenMultiaddrs,
   normalizePeerAddress,
@@ -77,16 +78,58 @@ export class P2PNetwork extends EventEmitter {
   }
 
   get peerCount(): number {
-    return this.node?.getPeers().length ?? 0;
+    return this.streams.size;
   }
 
   getPeerUrls(): string[] {
-    const urls: string[] = [];
-    if (this.advertisedUrl) urls.push(this.advertisedUrl);
-    for (const conn of this.node?.getConnections() ?? []) {
-      urls.push(conn.remoteAddr.toString());
+    return this.gossipAddresses();
+  }
+
+  /** Dialable addresses to exchange with other Sphere miners (no 127.0.0.1). */
+  gossipAddresses(): string[] {
+    const out = new Set<string>();
+    if (this.advertisedUrl && isGossipablePeerAddress(this.advertisedUrl)) {
+      try {
+        out.add(toMultiaddrString(this.advertisedUrl));
+      } catch {
+        out.add(this.advertisedUrl);
+      }
     }
-    return [...new Set(urls)];
+    if (!this.node) return [...out];
+
+    for (const addr of this.node.getMultiaddrs()) {
+      const rewritten = rewriteUnspecified(addr.toString(), this.advertisedUrl);
+      if (rewritten && isGossipablePeerAddress(rewritten) && !rewritten.includes('p2p-circuit')) {
+        out.add(rewritten);
+      }
+    }
+
+    if (this.offerRelay) {
+      const bases = [...out];
+      for (const id of this.streams.keys()) {
+        for (const base of bases) {
+          if (base.includes('p2p-circuit')) continue;
+          const withId = base.includes('/p2p/') ? base : `${base}/p2p/${this.node.peerId.toString()}`;
+          out.add(`${withId}/p2p-circuit/p2p/${id}`);
+        }
+      }
+    }
+
+    return [...out];
+  }
+
+  spherePeerIds(): string[] {
+    return [...this.streams.keys()];
+  }
+
+  sphereConnectionAddrs(): string[] {
+    if (!this.node) return [];
+    const out: string[] = [];
+    for (const id of this.streams.keys()) {
+      const conn = this.node.getConnections().find((item) => item.remotePeer.toString() === id);
+      if (conn) out.push(conn.remoteAddr.toString());
+    }
+    return out;
   }
 
   async listen(
@@ -158,7 +201,7 @@ export class P2PNetwork extends EventEmitter {
           : {}),
         ...(useRelay ? { dcutr: dcutr() } : {}),
         ...(this.offerRelay
-          ? { circuitRelay: circuitRelayServer({ reservations: { maxReservations: 16 } }) }
+          ? { circuitRelay: circuitRelayServer({ reservations: { maxReservations: 128 } }) }
           : {}),
       },
     });
@@ -390,6 +433,23 @@ export class P2PNetwork extends EventEmitter {
       console.log(`[p2p] ${event} ${label}`);
     }
   }
+}
+
+function rewriteUnspecified(addr: string, advertised?: string): string {
+  if (!isUnspecifiedHost(addr) || !advertised) return addr;
+  try {
+    const publicMa = toMultiaddrString(advertised);
+    const rest = addr.replace(/^\/ip[46]\/[^/]+/, '');
+    const prefix = publicMa.match(/^\/ip[46]\/[^/]+/)?.[0];
+    if (!prefix) return publicMa;
+    return `${prefix}${rest}`;
+  } catch {
+    return addr;
+  }
+}
+
+function isUnspecifiedHost(addr: string): boolean {
+  return /\/ip4\/0\.0\.0\.0\b/.test(addr) || /\/ip6\/::(\/|$)/.test(addr);
 }
 
 function dhtServices(node: Libp2p): KadDHT[] {

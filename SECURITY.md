@@ -15,6 +15,6 @@ Open a GitHub issue **without** private keys, seed phrases, or server credential
 
 ## Network
 
-- Nodes find each other via mDNS (LAN), `data/peers.json`, `--peers`, [`bootstrap-peers.json`](bootstrap-peers.json) on GitHub, and DHT. No VPS is required to keep the chain.
+- Nodes find each other via the public seed (`ws://57.128.203.234:6001`), mDNS, `data/peers.json`, `--peers`, [`bootstrap-peers.json`](bootstrap-peers.json), DHT, and circuit-relay through the seed. Keep the VPS until miners report `meshReady`. After that the seed is optional.
 - A reachable `--p2p-url` is optional help for inbound peers. It cannot spend your coins.
 - `POST /faucet` is an optional operator drip. It is not an exchange and not a way to recover a lost key.

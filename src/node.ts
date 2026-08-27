@@ -12,6 +12,12 @@ import { BinaryChainStore, type ChainStore } from './storage/persistence.js';
 import { P2PNetwork, type PeerSocket, normalizePeerUrl } from './network/p2p.js';
 import { DEFAULT_SEED_PEERS } from './network/seeds.js';
 import { fetchBootstrapPeers, LIBP2P_BOOTSTRAP } from './network/discovery.js';
+import {
+  isGossipablePeerAddress,
+  looksLikeBootstrapAddr,
+  MESH_READY_BOOTSTRAP_PEERS,
+  MESH_READY_MESH_PEERS,
+} from './network/gossip.js';
 import { PeerBook, isPeerUrl } from './network/peerBook.js';
 import { faucetFromEnv, type TestFaucet } from './api/faucet.js';
 import { startApiServer } from './api/server.js';
@@ -194,7 +200,22 @@ export class SphereNode {
   }
 
   getKnownPeers(): string[] {
-    return this.knownPeerUrls();
+    return this.gossipPeerUrls();
+  }
+
+  getMeshStatus(): { peers: number; meshPeers: number; meshReady: boolean } {
+    const peers = this.p2p.peerCount;
+    const meshPeers = this.p2p
+      .sphereConnectionAddrs()
+      .filter((addr) => !looksLikeBootstrapAddr(addr, this.bootstrapPeers)).length;
+    const advertised = this.p2p.getAdvertisedUrl();
+    const iAmBootstrap = Boolean(
+      advertised && looksLikeBootstrapAddr(advertised, this.bootstrapPeers),
+    );
+    const meshReady = iAmBootstrap
+      ? peers >= MESH_READY_BOOTSTRAP_PEERS
+      : meshPeers >= MESH_READY_MESH_PEERS;
+    return { peers, meshPeers, meshReady };
   }
 
   async addPeer(url: string): Promise<void> {
@@ -243,7 +264,7 @@ export class SphereNode {
       }
     });
     this.p2p.on('queryPeers', (from: PeerSocket) => {
-      this.p2p.send(from, { type: 'RESPONSE_PEERS', data: this.knownPeerUrls() });
+      this.p2p.send(from, { type: 'RESPONSE_PEERS', data: this.gossipPeerUrls() });
     });
     this.p2p.on('peers', (peers: string[]) => {
       void this.connectDiscovered(peers);
@@ -251,16 +272,26 @@ export class SphereNode {
     this.p2p.on('peerOpen', (from: PeerSocket) => {
       this.p2p.send(from, { type: 'QUERY_CHAIN' });
       this.p2p.send(from, { type: 'QUERY_PEERS' });
-      this.p2p.send(from, { type: 'RESPONSE_PEERS', data: this.knownPeerUrls() });
+      this.p2p.send(from, { type: 'RESPONSE_PEERS', data: this.gossipPeerUrls() });
     });
   }
 
+  private gossipPeerUrls(): string[] {
+    return [
+      ...new Set([
+        ...this.p2p.gossipAddresses(),
+        ...this.peerBook.list().filter((url) => isGossipablePeerAddress(url)),
+        ...this.bootstrapPeers.filter((url) => isGossipablePeerAddress(url)),
+      ]),
+    ];
+  }
+
   private knownPeerUrls(): string[] {
-    return [...new Set([...this.p2p.getPeerUrls(), ...this.peerBook.list(), ...this.bootstrapPeers])];
+    return [...new Set([...this.gossipPeerUrls(), ...this.peerBook.list(), ...this.bootstrapPeers])];
   }
 
   private rememberPeer(url: string): void {
-    if (!isPeerUrl(url)) return;
+    if (!isPeerUrl(url) || !isGossipablePeerAddress(url)) return;
     const normalized = normalizePeerUrl(url);
     const advertised = this.p2p.getAdvertisedUrl();
     if (advertised && normalizePeerUrl(advertised) === normalized) return;
