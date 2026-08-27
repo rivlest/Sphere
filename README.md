@@ -152,14 +152,20 @@ Most people only dial **out** to the seed. To accept inbound peers (help the net
 
 1. VPS with a public IP
 2. Open **TCP 3001** (REST), **TCP 6001** (P2P WebSocket), **TCP 6002** (P2P TCP) when using `--p2p-port 6001`
-3. Fresh `data/` directory (do not copy an old chain)
+3. Fresh data directory (do not copy an old chain)
 4. Advertise the public WebSocket URL:
 
 ```bash
-npm run start -- --port 3001 --p2p-port 6001 --data-dir data/seed --mine --miner-address sph1YOUR_ADDRESS --p2p-url ws://YOUR.PUBLIC.IP:6001
+npm run start -- --port 3001 --p2p-port 6001 --data-dir ~/sphere-data --mine --miner-address sph1YOUR_ADDRESS --p2p-url ws://YOUR.PUBLIC.IP:6001
 ```
 
 `--no-default-seeds` plus no `--peers` starts a **private fork**, not the public chain.
+
+To **reset the current public seed** (`57.128.203.234`) onto GitHub `master` (wipes old chain data, keeps `wallets/seed.json`, installs `systemd`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rivlest/Sphere/master/scripts/reset-public-seed.sh | bash
+```
 
 ### Two nodes on one computer
 
