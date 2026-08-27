@@ -7,9 +7,19 @@ This is a demonstration UI. It is **not** audited. Do not use it for money you c
 ## Requirements
 
 - Node.js 20+
-- A Sphere node the wallet can reach over HTTP:
-  - **Recommended:** your own node at `http://127.0.0.1:3001` (`npm run start` from the repo root)
-  - Optional: the public seed REST API `http://57.128.203.234:3001` (the seed sees your **address** and **signed** transactions, not your key)
+- HTTP access to a Sphere node. Mining is **not** required:
+  - **No local node:** `VITE_SPHERE_NODE_URL=http://57.128.203.234:3001`
+  - **Local node without mining** (repo root): `npm run start -- --port 3001 --p2p-port 6001` then default `http://127.0.0.1:3001`
+  - **Local node that also mines:** add `--mine --miner-address sph1…`
+
+## See balance from the CLI (no browser)
+
+From the **repo root** (`Desktop\Sphere` on Windows), no `--mine`:
+
+```powershell
+cd $env:USERPROFILE\Desktop\Sphere
+npm run wallet -- balance --wallet wallets\moj.json --node http://57.128.203.234:3001
+```
 
 ## Setup
 
