@@ -21,7 +21,7 @@ This is **not** Bitcoin, Ethereum, or a hosted wallet. There is no installer, no
 
 ## Is the network up?
 
-Public seed (keep this process running 24/7):
+Public seed (24/7):
 
 | | |
 | --- | --- |
@@ -43,9 +43,9 @@ If `curl` fails, the seed is down — you can still run a private chain, but you
 - **Node.js 20 or newer** (LTS from [nodejs.org](https://nodejs.org/) — tick “npm” on Windows)
 - **Git** ([git-scm.com](https://git-scm.com/download/win) on Windows). After install, **close every terminal and open a new one**, or `git` will not be found.
 - A CPU and about **4 MB RAM per mining attempt** (any normal PC or VPS from the last decade)
-- Outbound internet (to dial the seed). Opening ports is optional; only do that if you want others to connect **in**
+- Outbound internet to dial the seed. Open ports only if others should connect **in**.
 
-Windows, macOS, and Linux all work. Mining is **optional**. The wallet only needs a REST API (your node **or** the public seed).
+Windows, macOS, and Linux all work. The wallet needs a REST API: your node or the public seed.
 
 ---
 
@@ -56,10 +56,10 @@ Do **1 → 2 → 3** once. After that pick **only what you need** from the table
 | I want to… | Mining? | What to run |
 | --- | --- | --- |
 | See my balance / open the web wallet | **No** | Wallet CLI against the seed, **or** a node **without** `--mine` |
-| Send SPH | **No** | Same as above (someone on the network must mine the tx into a block) |
+| Send SPH | **No** | Same as balance |
 | Earn 50 SPH block rewards | **Yes** | `npm run start -- --mine --miner-address sph1…` |
 
-`--mine` is **not** required to display the wallet. `0 SPH` is normal until you win a block or someone sends you coins.
+`--mine` is not required to display the wallet. `0 SPH` is normal until you win a block or someone sends you coins.
 
 ### 1. Install Node.js and Git
 
@@ -88,7 +88,7 @@ cd Sphere
 npm install
 ```
 
-If the `Sphere` folder is already on your Desktop (`destination path already exists`):
+If the `Sphere` folder is already on your Desktop:
 
 ```powershell
 cd $env:USERPROFILE\Desktop\Sphere
@@ -118,15 +118,15 @@ Copy the `sph1…` **address**.
 
 The file `wallets/moj.json` is your **private key**. Back it up offline. Do not put it in git, Discord, email, or a screenshot. `wallets/` is gitignored on purpose.
 
-### 4. See your balance (no mining)
+### 4. See your balance
 
-From the `Sphere` folder. **Windows PowerShell:**
+Windows PowerShell:
 
 ```powershell
 cd $env:USERPROFILE\Desktop\Sphere
 ```
 
-Against the **public seed** (no local node, no `--mine`):
+Public seed:
 
 ```powershell
 npm run wallet -- balance --wallet wallets\moj.json --node http://57.128.203.234:3001
@@ -145,9 +145,9 @@ Only an address, no JSON file:
 npm run wallet -- balance --address sph1YOUR_ADDRESS --node http://57.128.203.234:3001
 ```
 
-### 5. Local node without mining
+### 5. Local node
 
-Use this if you want your own copy of the chain (sync + REST on `http://127.0.0.1:3001`) but you are **not** earning rewards. Leave this window open.
+Sync and REST on `http://127.0.0.1:3001`. Leave this window open.
 
 ```bash
 npm run start -- --port 3001 --p2p-port 6001
@@ -160,11 +160,9 @@ npm run wallet -- balance --wallet wallets/moj.json --node http://127.0.0.1:3001
 curl http://127.0.0.1:3001/status
 ```
 
-Your `height` should catch up to [the seed `/status`](http://57.128.203.234:3001/status). `"mining": false` is correct here.
+Your `height` should catch up to [the seed `/status`](http://57.128.203.234:3001/status).
 
-### 6. Mine (optional — this is how you earn SPH)
-
-Mining is a **separate** choice. Same node command, plus `--mine` and your address:
+### 6. Mine
 
 ```bash
 npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1PASTE_YOUR_ADDRESS
@@ -182,27 +180,25 @@ curl http://127.0.0.1:3001/status
 - `height` matches (or is catching up to) the seed — same chain  
 - `mining` is `true`
 
-Rewards (50 SPH) go **only** to `--miner-address` when **your** node finds a block. Check that same address with the balance command above. Target spacing is 10 minutes; with few miners a block can take less or more. You do not need to open ports to mine.
+Rewards (50 SPH) go to `--miner-address` when your node finds a block. Target spacing is 10 minutes. You do not need to open ports to mine.
 
-Do not run two `npm run start` on the same ports. To switch from “sync only” to mining, stop the first node (Ctrl+C) and start again with `--mine`.
+Do not run two `npm run start` on the same ports. To add mining, stop the node (Ctrl+C) and start again with `--mine`.
 
 ### 7. Send coins
-
-You do **not** need `--mine` on your machine. You do need a node URL (seed or local) and a balance.
 
 ```bash
 npm run wallet -- send --wallet wallets/moj.json --to sph1RECIPIENT --amount 1 --fee 0.0001 --node http://127.0.0.1:3001
 ```
 
-Or `--node http://57.128.203.234:3001` to broadcast via the seed. Amounts are **SPH decimals** (max 8 places). Transfers sit in the mempool until **any** miner on the network includes them in a block.
+Or `--node http://57.128.203.234:3001` to broadcast via the seed. Amounts are SPH decimals (max 8 places). Transfers sit in the mempool until a miner includes them in a block.
 
 ---
 
 ## Web wallet
 
-Does **not** mine. It only talks HTTP to a node.
+HTTP to a node. Keys stay in the browser.
 
-**A — use the public seed** (no `npm run start` on your PC):
+**A — public seed**
 
 ```powershell
 cd $env:USERPROFILE\Desktop\Sphere\sphere-wallet-web
@@ -222,9 +218,9 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). You still sign in the browser; the seed never gets your private key. You are trusting that server for **balances and broadcast**.
+Open [http://localhost:5173](http://localhost:5173). The seed never receives your private key.
 
-**B — your own node, still without mining** (from the repo root, leave it running):
+**B — your own node** (from the repo root, leave it running):
 
 ```bash
 npm run start -- --port 3001 --p2p-port 6001
@@ -239,13 +235,13 @@ npm install
 npm run dev
 ```
 
-Keep `VITE_SPHERE_NODE_URL=http://127.0.0.1:3001` (the default in `.env.example`).
+Keep `VITE_SPHERE_NODE_URL=http://127.0.0.1:3001`.
 
 macOS / Linux: `cp .env.example .env` instead of `copy`. More detail: [`sphere-wallet-web/README.md`](sphere-wallet-web/README.md).
 
 ---
 
-## How mining works (plain language)
+## How mining works
 
 1. Every block header is hashed with **Argon2id** (memory-hard). One try costs real RAM, not just a SHA-256d tick. Transaction ids and Merkle trees stay double SHA-256.
 2. A block is valid if `hash ≤ bitsToTarget(bits)`.
@@ -258,7 +254,7 @@ You mine by running `npm run start -- --mine --miner-address …`. There is no s
 
 ---
 
-## Run a public node (optional)
+## Run a public node
 
 Most people only dial **out** to the seed. To accept inbound peers (help the network):
 
@@ -273,7 +269,7 @@ npm run start -- --port 3001 --p2p-port 6001 --data-dir ~/sphere-data --mine --m
 
 `--no-default-seeds` plus no `--peers` starts a **private fork**, not the public chain.
 
-To **reset the current public seed** (`57.128.203.234`) onto GitHub `master` (wipes old chain data, keeps `wallets/seed.json`, installs `systemd`):
+To reset the public seed (`57.128.203.234`) onto GitHub `master`. Wipes chain data, keeps `wallets/seed.json`, installs `systemd`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rivlest/Sphere/master/scripts/reset-public-seed.sh | bash
@@ -301,7 +297,7 @@ Longest valid chain wins; the replacement is fully validated first.
 | `--peers` | Extra bootstrap peers, comma-separated `ws://host:port` |
 | `--no-default-seeds` | Do not dial the compiled seed list |
 | `--p2p-url` | Public `ws://host:port` advertised to others |
-| `--mine` | Mine in a loop (**omit this** if you only want wallet / sync) |
+| `--mine` | Mine in a loop |
 | `--miner-address` | Coinbase recipient (`sph1…`) — required with `--mine` |
 | `--data-dir` | Chain directory (`chain.dat` + `chain.idx`, default `data`) |
 
@@ -342,7 +338,7 @@ CORS is enabled so the browser wallet can call a local node.
 
 ---
 
-## Consensus (reference)
+## Consensus
 
 - Header PoW: Argon2id, `memoryCost` 4096 KiB, `timeCost` 1, `parallelism` 1, 32-byte raw digest, salt `sphere-hdr-v2pad`
 - Compact `bits`: 1-byte exponent + 3-byte mantissa (unsigned); valid if hash ≤ target
@@ -365,7 +361,7 @@ CORS is enabled so the browser wallet can call a local node.
 | `curl` to `:3001` fails | Wait 10s after start; check the node window for errors; is another app using 3001? |
 | `peers`: 0 on **your** node | Firewall/outbound WebSocket; try `--peers ws://57.128.203.234:6001`; seed may be down |
 | `height` never matches the seed | You started with old `data/` — stop the node, delete that data dir, start again. Or you used `--no-default-seeds` |
-| Balance is 0 | Mining is optional to *see* the wallet. 0 SPH means no coins yet — mine with the **same** `sph1` as `--miner-address`, or get a transfer |
+| Balance is 0 | No coins yet. Mine with the same `sph1` as `--miner-address`, or get a transfer |
 | `curl` / wallet cannot reach `:3001` | You used a local `--node` but never started `npm run start`. Use `--node http://57.128.203.234:3001` or start a node |
 | Second local node will not start | Port clash: first node uses 6001 **and** 6002. Use `--p2p-port 6101` for the second |
 

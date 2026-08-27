@@ -7,14 +7,14 @@ This is a demonstration UI. It is **not** audited. Do not use it for money you c
 ## Requirements
 
 - Node.js 20+
-- HTTP access to a Sphere node. Mining is **not** required:
-  - **No local node:** `VITE_SPHERE_NODE_URL=http://57.128.203.234:3001`
-  - **Local node without mining** (repo root): `npm run start -- --port 3001 --p2p-port 6001` then default `http://127.0.0.1:3001`
-  - **Local node that also mines:** add `--mine --miner-address sph1…`
+- HTTP access to a Sphere node:
+  - Public seed: `VITE_SPHERE_NODE_URL=http://57.128.203.234:3001`
+  - Local node (repo root): `npm run start -- --port 3001 --p2p-port 6001` → `http://127.0.0.1:3001`
+  - Local node that mines: add `--mine --miner-address sph1…`
 
-## See balance from the CLI (no browser)
+## See balance from the CLI
 
-From the **repo root** (`Desktop\Sphere` on Windows), no `--mine`:
+From the repo root:
 
 ```powershell
 cd $env:USERPROFILE\Desktop\Sphere
