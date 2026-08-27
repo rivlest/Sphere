@@ -11,9 +11,10 @@ Sphere is experimental software. It has **not** had a professional audit. Do not
 
 ## Reporting a vulnerability
 
-Open a GitHub issue **without** private keys, seed phrases, or server credentials. If the bug allows theft or chain halt, describe the impact and a way to reproduce on a private test node — not a live exploit against the public seed.
+Open a GitHub issue **without** private keys, seed phrases, or server credentials. If the bug allows theft or chain halt, describe the impact and a way to reproduce on a private test node.
 
 ## Network
 
-- The compiled seed (`ws://57.128.203.234:6001`) is a bootstrap peer, not a custodian. It cannot spend your coins.
+- Nodes find each other via mDNS (LAN), `data/peers.json`, `--peers`, [`bootstrap-peers.json`](bootstrap-peers.json) on GitHub, and DHT. No VPS is required to keep the chain.
+- A reachable `--p2p-url` is optional help for inbound peers. It cannot spend your coins.
 - `POST /faucet` is an optional operator drip. It is not an exchange and not a way to recover a lost key.

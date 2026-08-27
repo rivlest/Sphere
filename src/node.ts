@@ -11,6 +11,7 @@ import { Mempool } from './mempool/mempool.js';
 import { BinaryChainStore, type ChainStore } from './storage/persistence.js';
 import { P2PNetwork, type PeerSocket, normalizePeerUrl } from './network/p2p.js';
 import { DEFAULT_SEED_PEERS } from './network/seeds.js';
+import { fetchBootstrapPeers, LIBP2P_BOOTSTRAP } from './network/discovery.js';
 import { PeerBook, isPeerUrl } from './network/peerBook.js';
 import { faucetFromEnv, type TestFaucet } from './api/faucet.js';
 import { startApiServer } from './api/server.js';
@@ -23,7 +24,7 @@ export interface NodeOptions {
   minerAddress?: string;
   /** Public `ws://host:port` advertised to peers. Defaults to localhost. */
   advertisedP2pUrl?: string;
-  /** Connect to DEFAULT_SEED_PEERS in addition to --peers. Default true. */
+  /** Connect to compiled seeds, GitHub peer list, and public DHT. Default true. */
   useDefaultSeeds?: boolean;
   dataDir: string;
   config?: Partial<ChainConfig>;
@@ -74,6 +75,8 @@ export class SphereNode {
       silent: this.silent,
       dataDir: options.dataDir,
       lanDiscovery: !this.silent,
+      internetDiscovery: options.useDefaultSeeds !== false && !this.silent,
+      offerRelay: Boolean(options.advertisedP2pUrl),
     });
   }
 
@@ -86,8 +89,19 @@ export class SphereNode {
     await this.peerBook.load();
     this.bindP2P();
 
+    if (this.options.useDefaultSeeds !== false && !this.silent) {
+      const listed = await fetchBootstrapPeers();
+      for (const url of listed) {
+        if (!this.bootstrapPeers.includes(url)) this.bootstrapPeers.push(url);
+      }
+    }
+
+    const listenBootstrap = [
+      ...this.bootstrapPeers,
+      ...(this.options.useDefaultSeeds !== false && !this.silent ? LIBP2P_BOOTSTRAP : []),
+    ];
     this.p2pPort = await this.p2p.listen(this.options.p2pPort, {
-      bootstrap: this.bootstrapPeers,
+      bootstrap: listenBootstrap,
       announce: this.options.advertisedP2pUrl,
     });
     const advertised =
@@ -107,6 +121,9 @@ export class SphereNode {
     for (const peer of toDial) {
       await this.tryDial(peer);
     }
+
+    void this.p2p.advertiseSphere();
+    void this.p2p.findSpherePeers();
 
     this.peerRefresh = setInterval(() => {
       void this.refreshPeers();
@@ -267,6 +284,8 @@ export class SphereNode {
     for (const url of this.knownPeerUrls()) {
       await this.tryDial(url);
     }
+    await this.p2p.advertiseSphere();
+    await this.p2p.findSpherePeers();
     await this.peerBook.save();
   }
 

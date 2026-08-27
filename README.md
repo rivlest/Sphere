@@ -21,20 +21,15 @@ This is **not** Bitcoin, Ethereum, or a hosted wallet. There is no installer, no
 
 ## Is the network up?
 
-Public seed (24/7):
-
-| | |
-| --- | --- |
-| P2P | `ws://57.128.203.234:6001` |
-| REST | [http://57.128.203.234:3001](http://57.128.203.234:3001) |
+Start a node, then:
 
 ```bash
-curl http://57.128.203.234:3001/status
+curl http://127.0.0.1:3001/status
 ```
 
-You should see JSON with `"name": "Sphere"`, a `height`, `bits`, and `latestHash`. Rising `height` means blocks are being found. `"peers": 0` on the seed is normal until someone else connects.
+You should see JSON with `"name": "Sphere"`, a `height`, `bits`, and `latestHash`. Rising `height` means blocks are being found. `"peers": 0` is normal until another Sphere node is found (same LAN, `--peers`, or DHT).
 
-If `curl` fails, the seed is down — you can still run a private chain, but you will not join the public network.
+The chain lives on every node’s disk (`data/` or `--data-dir`). There is no required VPS. If one machine goes offline, others keep the same blocks.
 
 ---
 
@@ -42,10 +37,10 @@ If `curl` fails, the seed is down — you can still run a private chain, but you
 
 - **Node.js 20 or newer** (LTS from [nodejs.org](https://nodejs.org/) — tick “npm” on Windows)
 - **Git** ([git-scm.com](https://git-scm.com/download/win) on Windows). After install, **close every terminal and open a new one**, or `git` will not be found.
-- A CPU and about **4 MB RAM per mining attempt** (any normal PC or VPS from the last decade)
-- Outbound internet to dial the seed. Open ports only if others should connect **in**.
+- A CPU and about **4 MB RAM per mining attempt** (any normal PC from the last decade)
+- Outbound internet (to find other nodes). Open ports only if others should connect **in**.
 
-Windows, macOS, and Linux all work. The wallet needs a REST API: your node or the public seed.
+Windows, macOS, and Linux all work. The wallet talks to your local node’s REST API (`http://127.0.0.1:3001`).
 
 ---
 
@@ -53,13 +48,13 @@ Windows, macOS, and Linux all work. The wallet needs a REST API: your node or th
 
 Do **1 → 2 → 3** once. After that pick **only what you need** from the table.
 
-| I want to… | Mining? | What to run |
-| --- | --- | --- |
-| See my balance / open the web wallet | **No** | Wallet CLI against the seed, **or** a node **without** `--mine` |
-| Send SPH | **No** | Same as balance |
-| Earn 50 SPH block rewards | **Yes** | `npm run start -- --mine --miner-address sph1…` |
+| I want to… | What to run |
+| --- | --- |
+| See my balance / open the web wallet | Wallet CLI or web wallet against `http://127.0.0.1:3001` |
+| Send SPH | Same as balance |
+| Earn 50 SPH block rewards | `npm run start -- --mine --miner-address sph1…` |
 
-`--mine` is not required to display the wallet. `0 SPH` is normal until you win a block or someone sends you coins.
+`0 SPH` is normal until you win a block or someone sends you coins.
 
 ### 1. Install Node.js and Git
 
@@ -120,30 +115,29 @@ The file `wallets/moj.json` is your **private key**. Back it up offline. Do not 
 
 ### 4. See your balance
 
+Start a node (step 5) if it is not already running. Then, from the `Sphere` folder:
+
 Windows PowerShell:
 
 ```powershell
 cd $env:USERPROFILE\Desktop\Sphere
-```
-
-Public seed:
-
-```powershell
-npm run wallet -- balance --wallet wallets\moj.json --node http://57.128.203.234:3001
+npm run wallet -- balance --wallet wallets\moj.json
 ```
 
 macOS / Linux:
 
 ```bash
 cd ~/Sphere
-npm run wallet -- balance --wallet wallets/moj.json --node http://57.128.203.234:3001
+npm run wallet -- balance --wallet wallets/moj.json
 ```
 
 Only an address, no JSON file:
 
 ```bash
-npm run wallet -- balance --address sph1YOUR_ADDRESS --node http://57.128.203.234:3001
+npm run wallet -- balance --address sph1YOUR_ADDRESS
 ```
+
+`--node` defaults to `http://127.0.0.1:3001`.
 
 ### 5. Local node
 
@@ -156,11 +150,11 @@ npm run start -- --port 3001 --p2p-port 6001
 Then in a **second** terminal, from the `Sphere` folder:
 
 ```bash
-npm run wallet -- balance --wallet wallets/moj.json --node http://127.0.0.1:3001
+npm run wallet -- balance --wallet wallets/moj.json
 curl http://127.0.0.1:3001/status
 ```
 
-Your `height` should catch up to [the seed `/status`](http://57.128.203.234:3001/status).
+Same Wi-Fi: other Sphere nodes appear via mDNS. Across the internet: `--peers ws://THEIR.IP:6001` or a reachable `--p2p-url`. After the first successful connect, URLs are stored in `data/peers.json`.
 
 ### 6. Mine
 
@@ -168,7 +162,7 @@ Your `height` should catch up to [the seed `/status`](http://57.128.203.234:3001
 npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1PASTE_YOUR_ADDRESS
 ```
 
-Leave this window open. The node dials the compiled seed list automatically.
+Leave this window open. Mining runs on **this** computer.
 
 Wait ~10 seconds, then in a **second** terminal:
 
@@ -176,9 +170,8 @@ Wait ~10 seconds, then in a **second** terminal:
 curl http://127.0.0.1:3001/status
 ```
 
-- `peers` ≥ 1 — you reached the seed  
-- `height` matches (or is catching up to) the seed — same chain  
 - `mining` is `true`
+- `height` increases when this node (or a peer) finds a block
 
 Rewards (50 SPH) go to `--miner-address` when your node finds a block. Target spacing is 10 minutes. You do not need to open ports to mine.
 
@@ -187,10 +180,10 @@ Do not run two `npm run start` on the same ports. To add mining, stop the node (
 ### 7. Send coins
 
 ```bash
-npm run wallet -- send --wallet wallets/moj.json --to sph1RECIPIENT --amount 1 --fee 0.0001 --node http://127.0.0.1:3001
+npm run wallet -- send --wallet wallets/moj.json --to sph1RECIPIENT --amount 1 --fee 0.0001
 ```
 
-Or `--node http://57.128.203.234:3001` to broadcast via the seed. Amounts are SPH decimals (max 8 places). Transfers sit in the mempool until a miner includes them in a block.
+Amounts are SPH decimals (max 8 places). Transfers sit in the mempool until a miner includes them in a block.
 
 ---
 
@@ -198,18 +191,20 @@ Or `--node http://57.128.203.234:3001` to broadcast via the seed. Amounts are SP
 
 HTTP to a node. Keys stay in the browser.
 
-**A — public seed**
+**A — your node** (repo root, leave it running):
+
+```bash
+npm run start -- --port 3001 --p2p-port 6001
+```
+
+Then:
 
 ```powershell
 cd $env:USERPROFILE\Desktop\Sphere\sphere-wallet-web
 copy .env.example .env
 ```
 
-Put this in `.env`:
-
-```text
-VITE_SPHERE_NODE_URL=http://57.128.203.234:3001
-```
+Keep `VITE_SPHERE_NODE_URL=http://127.0.0.1:3001`.
 
 Then:
 
@@ -218,24 +213,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). The seed never receives your private key.
-
-**B — your own node** (from the repo root, leave it running):
-
-```bash
-npm run start -- --port 3001 --p2p-port 6001
-```
-
-In another terminal:
-
-```powershell
-cd $env:USERPROFILE\Desktop\Sphere\sphere-wallet-web
-copy .env.example .env
-npm install
-npm run dev
-```
-
-Keep `VITE_SPHERE_NODE_URL=http://127.0.0.1:3001`.
+Open [http://localhost:5173](http://localhost:5173). The node never receives your private key.
 
 macOS / Linux: `cp .env.example .env` instead of `copy`. More detail: [`sphere-wallet-web/README.md`](sphere-wallet-web/README.md).
 
@@ -254,26 +232,21 @@ You mine by running `npm run start -- --mine --miner-address …`. There is no s
 
 ---
 
-## Run a public node
+## Run a reachable node
 
-Most people only dial **out** to the seed. To accept inbound peers (help the network):
+Not required. Use this if you want others on the internet to dial **in** (home PC with port forward, or any always-on host):
 
-1. VPS with a public IP
-2. Open **TCP 3001** (REST), **TCP 6001** (P2P WebSocket), **TCP 6002** (P2P TCP) when using `--p2p-port 6001`
-3. Fresh data directory (do not copy an old chain)
-4. Advertise the public WebSocket URL:
+1. Public IP or forwarded **TCP 3001**, **TCP 6001**, **TCP 6002** when using `--p2p-port 6001`
+2. Fresh data directory (do not copy an old chain)
+3. Advertise the public WebSocket URL:
 
 ```bash
-npm run start -- --port 3001 --p2p-port 6001 --data-dir ~/sphere-data --mine --miner-address sph1YOUR_ADDRESS --p2p-url ws://YOUR.PUBLIC.IP:6001
+npm run start -- --port 3001 --p2p-port 6001 --data-dir ~/sphere-data --p2p-url ws://YOUR.PUBLIC.IP:6001
 ```
+
+Add that `ws://…` URL to [`bootstrap-peers.json`](bootstrap-peers.json) if you want new clones to find you without `--peers`.
 
 `--no-default-seeds` plus no `--peers` starts a **private fork**, not the public chain.
-
-To reset the public seed (`57.128.203.234`) onto GitHub `master`. Wipes chain data, keeps `wallets/seed.json`, installs `systemd`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rivlest/Sphere/master/scripts/reset-public-seed.sh | bash
-```
 
 ### Two nodes on one computer
 
@@ -295,7 +268,7 @@ Longest valid chain wins; the replacement is fully validated first.
 | `--port` | REST API port (default `3001`) |
 | `--p2p-port` | WebSocket P2P port (default `6001`; TCP is this + 1) |
 | `--peers` | Extra bootstrap peers, comma-separated `ws://host:port` |
-| `--no-default-seeds` | Do not dial the compiled seed list |
+| `--no-default-seeds` | Private node: skip GitHub peer list and public DHT |
 | `--p2p-url` | Public `ws://host:port` advertised to others |
 | `--mine` | Mine in a loop |
 | `--miner-address` | Coinbase recipient (`sph1…`) — required with `--mine` |
@@ -316,7 +289,7 @@ Longest valid chain wins; the replacement is fully validated first.
 
 ## REST API
 
-Base URL: your node (`http://127.0.0.1:3001`) or the seed (`http://57.128.203.234:3001`).
+Base URL: your node (`http://127.0.0.1:3001`).
 
 | Method | Path | Description |
 | --- | --- | --- |
@@ -346,7 +319,7 @@ CORS is enabled so the browser wallet can call a local node.
 - Retarget every **144** blocks: `new_target = old × actual / expected`, clamped to ×1.4 / ÷1.4
 - Stall valve: gap **>10×** target spacing (100 min) eases ×1.4 per such window, capped at genesis
 - Mempool: highest fee first, max 500 transactions per block, 1 hour TTL
-- P2P: libp2p (WebSocket + TCP, Noise, Identify, ping, Kademlia `/sphere/kad/1.0.0`)
+- P2P: libp2p (WebSocket + TCP, Noise, Identify, ping, Kademlia `/sphere/kad/1.0.0`, mDNS, optional public DHT + circuit relay)
 
 ---
 
@@ -359,10 +332,10 @@ CORS is enabled so the browser wallet can call a local node.
 | `destination path 'Sphere' already exists` | Do not clone again. `cd $env:USERPROFILE\Desktop\Sphere` |
 | `npm install` fails on `argon2` | 64-bit OS? Node 20+? Then install C build tools (Windows: “Desktop development with C++”) and retry |
 | `curl` to `:3001` fails | Wait 10s after start; check the node window for errors; is another app using 3001? |
-| `peers`: 0 on **your** node | Firewall/outbound WebSocket; try `--peers ws://57.128.203.234:6001`; seed may be down |
-| `height` never matches the seed | You started with old `data/` — stop the node, delete that data dir, start again. Or you used `--no-default-seeds` |
+| `peers`: 0 | Wait; same LAN uses mDNS. Across the internet use `--peers ws://host:6001` or `--p2p-url`. After one connect, see `data/peers.json` |
+| `height` never matches a friend | Different data dirs / old `data/` — stop, delete that dir, start again. Or you used `--no-default-seeds` |
 | Balance is 0 | No coins yet. Mine with the same `sph1` as `--miner-address`, or get a transfer |
-| `curl` / wallet cannot reach `:3001` | You used a local `--node` but never started `npm run start`. Use `--node http://57.128.203.234:3001` or start a node |
+| `curl` / wallet cannot reach `:3001` | Start `npm run start` in another terminal, or pass `--node` to a running node |
 | Second local node will not start | Port clash: first node uses 6001 **and** 6002. Use `--p2p-port 6101` for the second |
 
 Tests: `npm test` from the repo root.
@@ -375,7 +348,7 @@ Tests: `npm test` from the repo root.
 src/core              blocks, chain, PoW, Merkle, transactions
 src/wallet            keys, addresses, signatures
 src/mempool           pending transactions
-src/network           libp2p (WebSocket + TCP, Sphere DHT, bootstrap)
+src/network           libp2p (WebSocket + TCP, Sphere DHT, mDNS, discovery)
 src/api               Express REST API
 src/storage           append-only chain.dat + chain.idx
 src/cli               node + wallet-cli

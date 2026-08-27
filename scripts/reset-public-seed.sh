@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Reset this machine to the public Sphere chain (GitHub master).
 # Wipes local chain data. Keeps wallets/seed.json if present.
+# Optional always-on helper (REST + P2P). Not required for the network.
+# Does not mine — operators mine on their own machines.
 # Run on the seed VPS as the same user that owns ~/Sphere.
 set -euo pipefail
 
@@ -33,16 +35,6 @@ cd "$APP_DIR"
 npm install
 
 mkdir -p "$(dirname "$WALLET")"
-if [[ ! -f "$WALLET" ]]; then
-  echo "[sphere] creating seed miner wallet $WALLET"
-  npm run wallet -- generate --out "$WALLET"
-fi
-MINER_ADDRESS="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).address)" "$WALLET")"
-if [[ "$MINER_ADDRESS" != sph1* ]]; then
-  echo "[sphere] could not read miner address from $WALLET" >&2
-  exit 1
-fi
-echo "[sphere] miner address $MINER_ADDRESS"
 
 echo "[sphere] wiping chain data (old SHA-256d / account snapshots cannot join this network)…"
 rm -rf "$DATA_DIR"
@@ -63,7 +55,7 @@ SERVICE=/etc/systemd/system/sphere.service
 echo "[sphere] installing $SERVICE"
 sudo tee "$SERVICE" >/dev/null <<UNIT
 [Unit]
-Description=Sphere public seed node
+Description=Sphere public seed node (no mining)
 After=network-online.target
 Wants=network-online.target
 
@@ -72,7 +64,7 @@ Type=simple
 User=$(id -un)
 Group=$(id -gn)
 WorkingDirectory=$APP_DIR
-ExecStart=$NPM_BIN run start -- --port 3001 --p2p-port 6001 --data-dir $DATA_DIR --mine --miner-address $MINER_ADDRESS --p2p-url $SEED_P2P_URL
+ExecStart=$NPM_BIN run start -- --port 3001 --p2p-port 6001 --data-dir $DATA_DIR --p2p-url $SEED_P2P_URL
 Restart=always
 RestartSec=4
 Environment=NODE_ENV=production
@@ -91,7 +83,7 @@ for i in $(seq 1 30); do
   if curl -fsS --max-time 2 http://127.0.0.1:3001/status >/tmp/sphere-status.json 2>/dev/null; then
     cat /tmp/sphere-status.json
     echo
-    echo "[sphere] public seed is on GitHub master. Others should git clone + npm start; they dial $SEED_P2P_URL automatically."
+    echo "[sphere] public seed is on GitHub master (not mining). Dial $SEED_P2P_URL; mine on your own machine with --mine."
     exit 0
   fi
   sleep 2

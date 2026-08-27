@@ -28,7 +28,7 @@ program
   .description('Fetch confirmed balance from a local node')
   .option('--wallet <file>', 'wallet JSON (used if --address is omitted)')
   .option('--address <address>', 'Sphere address')
-  .requiredOption('--node <url>', 'node REST base URL, e.g. http://127.0.0.1:3001')
+  .option('--node <url>', 'node REST base URL', 'http://127.0.0.1:3001')
   .action(async (cmd: { wallet?: string; address?: string; node: string }) => {
     const address = cmd.address ?? (await loadWallet(required(cmd.wallet, '--wallet'))).address;
     if (!isValidAddress(address)) {
@@ -48,7 +48,7 @@ program
   .requiredOption('--to <address>', 'recipient address')
   .requiredOption('--amount <sph>', 'amount in SPH (decimal string, not float math)')
   .option('--fee <sph>', 'fee in SPH', '0.0001')
-  .requiredOption('--node <url>', 'node REST base URL')
+  .option('--node <url>', 'node REST base URL', 'http://127.0.0.1:3001')
   .action(
     async (cmd: { wallet: string; to: string; amount: string; fee: string; node: string }) => {
       const wallet = await loadWallet(cmd.wallet);

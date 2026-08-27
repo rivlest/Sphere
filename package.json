@@ -28,7 +28,9 @@
     "@chainsafe/libp2p-noise": "^17.0.0",
     "@chainsafe/libp2p-yamux": "^8.0.1",
     "@libp2p/bootstrap": "^12.0.30",
+    "@libp2p/circuit-relay-v2": "^4.2.12",
     "@libp2p/crypto": "^5.1.23",
+    "@libp2p/dcutr": "^3.0.27",
     "@libp2p/identify": "^4.1.13",
     "@libp2p/kad-dht": "^16.4.4",
     "@libp2p/mdns": "^12.0.30",
@@ -44,6 +46,7 @@
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "libp2p": "^3.3.9",
+    "multiformats": "^14.0.5",
     "ws": "^8.18.1"
   },
   "devDependencies": {

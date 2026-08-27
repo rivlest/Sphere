@@ -8,14 +8,17 @@ import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
-import { kadDHT } from '@libp2p/kad-dht';
+import { kadDHT, removePrivateAddressesMapper, type KadDHT } from '@libp2p/kad-dht';
 import { bootstrap } from '@libp2p/bootstrap';
 import { mdns } from '@libp2p/mdns';
+import { circuitRelayServer, circuitRelayTransport } from '@libp2p/circuit-relay-v2';
+import { dcutr } from '@libp2p/dcutr';
 import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { multiaddr } from '@multiformats/multiaddr';
 import type { Connection, PeerId, PrivateKey, Stream } from '@libp2p/interface';
 import type { P2PMessage } from '../types.js';
 import { decodeMessage, encodeMessage } from './messages.js';
+import { sphereDiscoveryCid } from './discovery.js';
 import {
   listenMultiaddrs,
   normalizePeerAddress,
@@ -36,6 +39,10 @@ export interface P2PNetworkOptions {
   silent?: boolean;
   dataDir: string;
   lanDiscovery?: boolean;
+  /** Public DHT, GitHub peer list, circuit relay client. Off in tests. */
+  internetDiscovery?: boolean;
+  /** Accept circuit-relay HOP reservations (use with a public --p2p-url). */
+  offerRelay?: boolean;
 }
 
 const MAX_FRAME = 50 * 1024 * 1024;
@@ -46,6 +53,8 @@ export class P2PNetwork extends EventEmitter {
   private readonly silent: boolean;
   private readonly dataDir: string;
   private readonly lanDiscovery: boolean;
+  private readonly internetDiscovery: boolean;
+  private readonly offerRelay: boolean;
   private readonly streams = new Map<string, Set<Stream>>();
   private readonly buffers = new Map<Stream, Buffer>();
   private readonly opening = new Set<string>();
@@ -55,6 +64,8 @@ export class P2PNetwork extends EventEmitter {
     this.silent = Boolean(options.silent);
     this.dataDir = options.dataDir;
     this.lanDiscovery = options.lanDiscovery ?? true;
+    this.internetDiscovery = Boolean(options.internetDiscovery);
+    this.offerRelay = Boolean(options.offerRelay);
   }
 
   setAdvertisedUrl(url: string): void {
@@ -97,6 +108,8 @@ export class P2PNetwork extends EventEmitter {
       ? [toMultiaddrString(options.announce)]
       : undefined;
 
+    const useRelay = this.internetDiscovery || this.offerRelay;
+
     this.node = await createLibp2p({
       start: false,
       privateKey,
@@ -104,7 +117,11 @@ export class P2PNetwork extends EventEmitter {
         listen: listenMultiaddrs(port),
         announce,
       },
-      transports: [webSockets(), tcp()],
+      transports: [
+        webSockets(),
+        tcp(),
+        ...(useRelay ? [circuitRelayTransport()] : []),
+      ],
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
       peerDiscovery: [
@@ -122,7 +139,27 @@ export class P2PNetwork extends EventEmitter {
           protocol: SPHERE_DHT_PROTOCOL,
           clientMode: false,
           allowQueryWithZeroPeers: true,
+          logPrefix: 'libp2p:dht-sphere',
+          datastorePrefix: '/dht-sphere',
+          metricsPrefix: 'libp2p_dht_sphere',
         }),
+        ...(this.internetDiscovery
+          ? {
+              aminoDht: kadDHT({
+                protocol: '/ipfs/kad/1.0.0',
+                clientMode: true,
+                peerInfoMapper: removePrivateAddressesMapper,
+                allowQueryWithZeroPeers: true,
+                logPrefix: 'libp2p:dht-amino',
+                datastorePrefix: '/dht-amino',
+                metricsPrefix: 'libp2p_dht_amino',
+              }),
+            }
+          : {}),
+        ...(useRelay ? { dcutr: dcutr() } : {}),
+        ...(this.offerRelay
+          ? { circuitRelay: circuitRelayServer({ reservations: { maxReservations: 16 } }) }
+          : {}),
       },
     });
 
@@ -130,8 +167,13 @@ export class P2PNetwork extends EventEmitter {
       this.attachStream(stream, connection);
     });
 
+    this.node.addEventListener('peer:identify', (event) => {
+      if (event.detail.protocols.includes(SPHERE_SYNC_PROTOCOL)) {
+        void this.ensureSyncStream(event.detail.peerId);
+      }
+    });
     this.node.addEventListener('peer:connect', (event) => {
-      void this.ensureSyncStream(event.detail);
+      void this.maybeOpenSync(event.detail);
     });
     this.node.addEventListener('peer:disconnect', (event) => {
       this.dropPeer(event.detail.toString());
@@ -203,6 +245,51 @@ export class P2PNetwork extends EventEmitter {
       .filter(Boolean)
       .map((item) => stripPeerId(item));
     return self.includes(target);
+  }
+
+  async advertiseSphere(): Promise<void> {
+    if (!this.node) return;
+    const cid = await sphereDiscoveryCid();
+    for (const dht of dhtServices(this.node)) {
+      try {
+        for await (const _event of dht.provide(cid)) {
+          /* drain */
+        }
+      } catch {
+        // empty routing table is normal at startup
+      }
+    }
+  }
+
+  async findSpherePeers(): Promise<void> {
+    if (!this.node) return;
+    const cid = await sphereDiscoveryCid();
+    const self = this.node.peerId.toString();
+    for (const dht of dhtServices(this.node)) {
+      try {
+        const signal = AbortSignal.timeout(15_000);
+        for await (const event of dht.findProviders(cid, { signal })) {
+          if (event.name !== 'PROVIDER') continue;
+          for (const info of event.providers) {
+            if (info.id.toString() === self) continue;
+            void this.node.dial(info.id).catch(() => undefined);
+          }
+        }
+      } catch {
+        // timeout / empty DHT
+      }
+    }
+  }
+
+  private async maybeOpenSync(peerId: PeerId): Promise<void> {
+    if (!this.node) return;
+    try {
+      const peer = await this.node.peerStore.get(peerId);
+      if (!peer.protocols.includes(SPHERE_SYNC_PROTOCOL)) return;
+    } catch {
+      return;
+    }
+    await this.ensureSyncStream(peerId);
   }
 
   private async ensureSyncStream(peerId: PeerId): Promise<void> {
@@ -303,6 +390,16 @@ export class P2PNetwork extends EventEmitter {
       console.log(`[p2p] ${event} ${label}`);
     }
   }
+}
+
+function dhtServices(node: Libp2p): KadDHT[] {
+  const services = node.services as Record<string, unknown>;
+  const out: KadDHT[] = [];
+  for (const key of ['dht', 'aminoDht']) {
+    const svc = services[key] as KadDHT | undefined;
+    if (svc && typeof svc.provide === 'function') out.push(svc);
+  }
+  return out;
 }
 
 function writeFrame(stream: Stream, message: P2PMessage): void {

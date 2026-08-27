@@ -3,7 +3,7 @@ import { isPeerAddress, listenMultiaddrs, toMultiaddrString, wsListenPort } from
 
 describe('peer multiaddrs', () => {
   it('converts ws URLs to multiaddrs', () => {
-    expect(toMultiaddrString('ws://57.128.203.234:6001')).toBe('/ip4/57.128.203.234/tcp/6001/ws');
+    expect(toMultiaddrString('ws://192.0.2.1:6001')).toBe('/ip4/192.0.2.1/tcp/6001/ws');
     expect(toMultiaddrString('wss://seed.example:443')).toBe('/dns4/seed.example/tcp/443/wss');
     expect(isPeerAddress('/ip4/1.2.3.4/tcp/6001/ws')).toBe(true);
     expect(isPeerAddress('http://example.com')).toBe(false);

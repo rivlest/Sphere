@@ -6,12 +6,12 @@ describe('peer book', () => {
   it('accepts ws URLs and persists them', async () => {
     await withTempDir(async (dir) => {
       const book = new PeerBook(dir);
-      expect(book.add('ws://57.128.203.234:6001')).toBe(true);
+      expect(book.add('ws://192.0.2.1:6001')).toBe(true);
       expect(book.add('not-a-url')).toBe(false);
       await book.save();
       const loaded = new PeerBook(dir);
       await loaded.load();
-      expect(loaded.list()).toEqual(['/ip4/57.128.203.234/tcp/6001/ws']);
+      expect(loaded.list()).toEqual(['/ip4/192.0.2.1/tcp/6001/ws']);
     });
   });
 

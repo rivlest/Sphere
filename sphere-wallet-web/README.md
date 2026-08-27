@@ -8,17 +8,16 @@ This is a demonstration UI. It is **not** audited. Do not use it for money you c
 
 - Node.js 20+
 - HTTP access to a Sphere node:
-  - Public seed: `VITE_SPHERE_NODE_URL=http://57.128.203.234:3001`
   - Local node (repo root): `npm run start -- --port 3001 --p2p-port 6001` → `http://127.0.0.1:3001`
   - Local node that mines: add `--mine --miner-address sph1…`
 
 ## See balance from the CLI
 
-From the repo root:
+From the repo root (node must be running):
 
 ```powershell
 cd $env:USERPROFILE\Desktop\Sphere
-npm run wallet -- balance --wallet wallets\moj.json --node http://57.128.203.234:3001
+npm run wallet -- balance --wallet wallets\moj.json
 ```
 
 ## Setup
