@@ -41,7 +41,7 @@ If `curl` fails, the seed is down — you can still run a private chain, but you
 ## What you need
 
 - **Node.js 20 or newer** (LTS from [nodejs.org](https://nodejs.org/) — tick “npm” on Windows)
-- **Git**
+- **Git** ([git-scm.com](https://git-scm.com/download/win) on Windows). After install, **close every terminal and open a new one**, or `git` will not be found.
 - A CPU and about **4 MB RAM per mining attempt** (any normal PC or VPS from the last decade)
 - Outbound internet (to dial the seed). Opening ports is optional; only do that if you want others to connect **in**
 
@@ -69,7 +69,28 @@ git -v
 
 ### 2. Download Sphere and install dependencies
 
+**Windows (PowerShell):** do not run this from `C:\WINDOWS\system32` — clone will fail with `Permission denied`. Open a **new** PowerShell (Start → PowerShell), then:
+
+```powershell
+cd $env:USERPROFILE\Desktop
+git clone https://github.com/rivlest/Sphere.git
+cd Sphere
+npm install
+```
+
+If the `Sphere` folder is already on your Desktop (`destination path already exists`):
+
+```powershell
+cd $env:USERPROFILE\Desktop\Sphere
+npm install
+```
+
+If `git` is not recognized, close PowerShell and open a new window (or use **Git Bash** from the Start menu).
+
+**macOS / Linux:**
+
 ```bash
+cd ~
 git clone https://github.com/rivlest/Sphere.git
 cd Sphere
 npm install
@@ -247,6 +268,8 @@ CORS is enabled so the browser wallet can call a local node.
 | Problem | What to try |
 | --- | --- |
 | `git` / `node` not found | Install Git and Node 20, **close and reopen** the terminal |
+| `Permission denied` creating `Sphere` | You are in `C:\WINDOWS\system32`. Run `cd $env:USERPROFILE\Desktop` first |
+| `destination path 'Sphere' already exists` | Do not clone again. `cd $env:USERPROFILE\Desktop\Sphere` |
 | `npm install` fails on `argon2` | 64-bit OS? Node 20+? Then install C build tools (Windows: “Desktop development with C++”) and retry |
 | `curl` to `:3001` fails | Wait 10s after start; check the node window for errors; is another app using 3001? |
 | `peers`: 0 on **your** node | Firewall/outbound WebSocket; try `--peers ws://57.128.203.234:6001`; seed may be down |
