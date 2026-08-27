@@ -1,11 +1,15 @@
 # Sphere web wallet
 
-Browser wallet for the **Sphere (SPH)** local chain. It is a Vite SPA: private keys are generated and used only in memory (or in an encrypted keystore file you download). The node REST API never receives a private key.
+Browser wallet for **Sphere (SPH)**. Keys are created and used only on your machine (in memory, or in an encrypted keystore file you download). The node never receives a private key.
+
+This is a demonstration UI. It is **not** audited. Do not use it for money you cannot afford to lose.
 
 ## Requirements
 
 - Node.js 20+
-- A running Sphere node (`npm run start -- --port 3001` from the repo root)
+- A Sphere node the wallet can reach over HTTP:
+  - **Recommended:** your own node at `http://127.0.0.1:3001` (`npm run start` from the repo root)
+  - Optional: the public seed REST API `http://57.128.203.234:3001` (the seed sees your **address** and **signed** transactions, not your key)
 
 ## Setup
 
@@ -16,30 +20,37 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Point `VITE_SPHERE_NODE_URL` at the node REST origin (default `http://127.0.0.1:3001`).
+Open [http://localhost:5173](http://localhost:5173).
 
-## Features
+`VITE_SPHERE_NODE_URL` in `.env` is the node REST origin (default `http://127.0.0.1:3001`). After changing it, restart `npm run dev`.
 
-- Create a secp256k1 wallet (`sph1` + first 40 hex chars of `sha256(compressed public key)`)
-- Import from a raw private key or a PBKDF2 + AES-GCM keystore `{ address, salt, iv, ciphertext }`
-- Dashboard balance (`GET /balance/:address`, Orbs ÷ 100_000_000 = SPH)
-- Send: fetch `nextNonce`, hash and sign locally, `POST /transactions`
-- Receive: address + QR (`qrcode.react`), optional `sphere:<address>/?amount=` payment URI
-- Simulated SPH/USD price from `GET /price` — labeled **Kurs symulowany (demo)** because Sphere has no public market
+## What you can do
+
+- Create a secp256k1 wallet (`sph1` + first 40 hex characters of `sha256(compressed public key)`)
+- Import a raw private key or a PBKDF2 + AES-GCM keystore `{ address, salt, iv, ciphertext }`
+- See balance (`GET /balance/:address`)
+- Send: fetch UTXOs, coin-select and sign in the browser, `POST /transactions`
+- Receive: address + QR, optional `sphere:<address>/?amount=` payment URI
+- Market card from `GET /market` (on-chain supply; CoinMarketCap only if SPH is listed on the **node**)
 - Recent transfers from `GET /transactions/:address`
 
 ## Security
 
-- Private keys live in React state for the tab session and are cleared on **Wyloguj** or refresh
-- **Do not** store plaintext keys in `localStorage`
-- This is a demonstration. Do not use it with real funds without a professional audit
+- Keys live in React state for the tab. **Wyloguj** or refresh clears them
+- Download and keep the keystore file if you want the wallet again later
+- Do **not** store a plaintext private key in `localStorage`
+- Never paste a private key into GitHub issues, chat, or email
+
+## Market stats
+
+The dashboard uses `GET /market` on the node:
+
+- Circulating / max supply and holders always come from the chain (~21M SPH cap)
+- Price, cap, volume, and rank come from CoinMarketCap only when SPH is listed (`CMC_API_KEY` / `CMC_SLUG` on the **node**). CMC’s `sphere` slug is SPHR and is ignored
+- Until a listing or `SPHERE_PRICE_URL` exists, quotes stay unavailable — the node does not invent a price
 
 ## Tests
 
 ```bash
 npm test
 ```
-
-## Swap the price feed later
-
-`src/lib/api.ts` → `getPrice()` is the single mapping point. Replace the node URL with an exchange API and adapt the JSON shape to `PriceResponse`.

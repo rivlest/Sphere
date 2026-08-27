@@ -30,11 +30,11 @@ describe('multi-node integration', () => {
     const alice = createWallet();
     const tx = createSignedTransaction(
       {
-        from: miner.address,
+        utxos: nodeA.blockchain.getUtxos(miner.address),
         to: alice.address,
         amount: 5_000_000,
         fee: 1000,
-        nonce: 1,
+        changeAddress: miner.address,
       },
       miner.privateKey,
     );

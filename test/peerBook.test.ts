@@ -11,7 +11,7 @@ describe('peer book', () => {
       await book.save();
       const loaded = new PeerBook(dir);
       await loaded.load();
-      expect(loaded.list()).toEqual(['ws://57.128.203.234:6001']);
+      expect(loaded.list()).toEqual(['/ip4/57.128.203.234/tcp/6001/ws']);
     });
   });
 

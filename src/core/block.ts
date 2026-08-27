@@ -1,30 +1,34 @@
 import type { Block, BlockHeader, ChainConfig, Transaction } from '../types.js';
 import { hashBlockHeader } from './proofOfWork.js';
 import { merkleRoot } from './merkle.js';
-import { meetsDifficulty } from './difficulty.js';
+import { isValidBits, meetsProofOfWork } from './bits.js';
 import { ValidationError } from './errors.js';
-import { createCoinbaseTransaction, isCoinbaseTx } from './transaction.js';
+import { createCoinbaseTransaction, isCoinbaseTx, transactionFee, type Utxo } from './transaction.js';
 import { blockRewardOrbs } from './units.js';
 
 export interface ChainTip {
   latestBlock: Block;
-  nextDifficulty(): number;
+  nextBits(atTimestamp?: number): number;
   config: ChainConfig;
+  getUtxo(txid: string, vout: number): Utxo | undefined;
 }
 
-export function computeBlockHash(header: BlockHeader): string {
-  return hashBlockHeader(header);
+export async function computeBlockHash(header: BlockHeader, config: ChainConfig): Promise<string> {
+  return hashBlockHeader(header, config.pow);
 }
 
-export function createCandidateBlock(
+export async function createCandidateBlock(
   chain: ChainTip,
   minerAddress: string,
   userTransactions: Transaction[],
-): Block {
+): Promise<Block> {
   const previous = chain.latestBlock;
   const index = previous.header.index + 1;
   const timestamp = Math.max(Date.now(), previous.header.timestamp + 1);
-  const fees = userTransactions.reduce((sum, tx) => sum + tx.fee, 0);
+  const fees = userTransactions.reduce(
+    (sum, tx) => sum + transactionFee(tx, (txid, vout) => chain.getUtxo(txid, vout)),
+    0,
+  );
   const reward =
     blockRewardOrbs(index, chain.config.initialRewardOrbs, chain.config.halvingInterval) + fees;
   const coinbase = createCoinbaseTransaction({
@@ -39,38 +43,36 @@ export function createCandidateBlock(
       timestamp,
       previousHash: previous.hash,
       nonce: 0,
-      difficulty: chain.nextDifficulty(),
+      bits: chain.nextBits(timestamp),
       version: chain.config.blockVersion,
     },
     [coinbase, ...userTransactions],
+    chain.config,
   );
 }
 
-export function assembleBlock(
+export async function assembleBlock(
   header: Omit<BlockHeader, 'merkleRoot'>,
   transactions: Transaction[],
-): Block {
+  config: ChainConfig,
+): Promise<Block> {
   const merkle = merkleRoot(transactions.map((tx) => tx.hash));
   const fullHeader: BlockHeader = { ...header, merkleRoot: merkle };
-  const hash = computeBlockHash(fullHeader);
+  const hash = await computeBlockHash(fullHeader, config);
   return { header: fullHeader, hash, transactions };
 }
 
-export function validateBlockPoW(block: Block, options: { skipGenesisPow?: boolean } = {}): void {
-  const expectedHash = computeBlockHash(block.header);
+export async function validateBlockPoW(block: Block, config: ChainConfig): Promise<void> {
+  const expectedHash = await computeBlockHash(block.header, config);
   if (block.hash !== expectedHash) {
     throw new ValidationError('Block hash does not match header');
   }
-  const isGenesis = block.header.index === 0;
-  if (isGenesis && options.skipGenesisPow) {
-    return;
-  }
-  if (!meetsDifficulty(block.hash, block.header.difficulty)) {
-    throw new ValidationError('Block does not satisfy proof-of-work difficulty');
+  if (!meetsProofOfWork(block.hash, block.header.bits)) {
+    throw new ValidationError('Block does not satisfy proof-of-work target');
   }
 }
 
-export function validateBlockStructure(block: Block, config: ChainConfig): void {
+export async function validateBlockStructure(block: Block, config: ChainConfig): Promise<void> {
   const { header, transactions } = block;
   if (header.version !== config.blockVersion) {
     throw new ValidationError(`Unsupported block version ${header.version}`);
@@ -84,8 +86,8 @@ export function validateBlockStructure(block: Block, config: ChainConfig): void 
   if (!Number.isInteger(header.nonce) || header.nonce < 0) {
     throw new ValidationError('Invalid nonce');
   }
-  if (!Number.isInteger(header.difficulty) || header.difficulty < 0) {
-    throw new ValidationError('Invalid difficulty');
+  if (!isValidBits(header.bits)) {
+    throw new ValidationError('Invalid bits');
   }
   if (!Array.isArray(transactions) || transactions.length === 0) {
     throw new ValidationError('Block must contain at least a coinbase transaction');
@@ -112,5 +114,5 @@ export function validateBlockStructure(block: Block, config: ChainConfig): void 
     }
     hashes.add(tx.hash);
   }
-  validateBlockPoW(block, { skipGenesisPow: true });
+  await validateBlockPoW(block, config);
 }

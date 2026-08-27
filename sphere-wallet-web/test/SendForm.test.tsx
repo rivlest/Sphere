@@ -31,8 +31,14 @@ describe('SendForm', () => {
           address: sender.address,
           balance: 10 * ORBS_PER_SPH,
           balanceSph: '10',
-          nonce: 0,
-          nextNonce: 1,
+          utxos: [
+            {
+              txid: 'ab'.repeat(32),
+              vout: 0,
+              address: sender.address,
+              amount: 10 * ORBS_PER_SPH,
+            },
+          ],
         });
       }
       if (url.includes('/transactions') && init?.method === 'POST') {
@@ -62,16 +68,13 @@ describe('SendForm', () => {
     const serialized = JSON.stringify(post?.[1]);
     expect(serialized).not.toContain(sender.privateKey);
     const body = JSON.parse(String((post?.[1] as RequestInit).body)) as {
-      from: string;
-      to: string;
-      signature: string;
+      inputs: Array<{ signature: string }>;
+      outputs: Array<{ address: string; amount: number }>;
       hash: string;
-      amount: number;
     };
-    expect(body.from).toBe(sender.address);
-    expect(body.to).toBe(recipient.address);
-    expect(body.amount).toBe(125_000_000);
-    expect(body.signature).toHaveLength(130);
+    expect(body.outputs[0]!.address).toBe(recipient.address);
+    expect(body.outputs[0]!.amount).toBe(125_000_000);
+    expect(body.inputs[0]!.signature).toHaveLength(130);
     expect(body.hash).toHaveLength(64);
   });
 });

@@ -5,10 +5,10 @@ import { Blockchain } from './core/blockchain.js';
 import { createCandidateBlock } from './core/block.js';
 import { mineBlock } from './core/proofOfWork.js';
 import { ValidationError } from './core/errors.js';
-import { isCoinbaseTx, validateTransactionStructure } from './core/transaction.js';
+import { isCoinbaseTx, outpointKey, validateTransactionStructure, type Utxo } from './core/transaction.js';
 import { isValidAddress } from './wallet/keys.js';
 import { Mempool } from './mempool/mempool.js';
-import { JsonFileChainStore, type ChainStore } from './storage/persistence.js';
+import { BinaryChainStore, type ChainStore } from './storage/persistence.js';
 import { P2PNetwork, type PeerSocket, normalizePeerUrl } from './network/p2p.js';
 import { DEFAULT_SEED_PEERS } from './network/seeds.js';
 import { PeerBook, isPeerUrl } from './network/peerBook.js';
@@ -33,7 +33,7 @@ export interface NodeOptions {
 
 export class SphereNode {
   readonly config: ChainConfig;
-  readonly blockchain: Blockchain;
+  blockchain!: Blockchain;
   readonly mempool: Mempool;
   readonly p2p: P2PNetwork;
   readonly minerAddress?: string;
@@ -49,13 +49,17 @@ export class SphereNode {
   private mining = false;
   private mineAbort: AbortController | null = null;
   private persistQueue: Promise<void> = Promise.resolve();
+  private chainLock: Promise<void> = Promise.resolve();
   httpPort = 0;
   p2pPort = 0;
 
   constructor(private readonly options: NodeOptions) {
-    this.config = { ...DEFAULT_CONFIG, ...options.config };
-    this.store = options.store ?? new JsonFileChainStore(options.dataDir);
-    this.blockchain = new Blockchain(this.config);
+    this.config = {
+      ...DEFAULT_CONFIG,
+      ...options.config,
+      pow: options.config?.pow ?? DEFAULT_CONFIG.pow,
+    };
+    this.store = options.store ?? new BinaryChainStore(options.dataDir);
     this.mempool = new Mempool(this.config.mempoolTtlMs);
     this.minerAddress = options.minerAddress;
     this.dataDir = options.dataDir;
@@ -66,7 +70,11 @@ export class SphereNode {
     this.silent = Boolean(options.silent);
     this.peerBook = new PeerBook(options.dataDir);
     this.faucet = faucetFromEnv();
-    this.p2p = new P2PNetwork(undefined, this.silent);
+    this.p2p = new P2PNetwork({
+      silent: this.silent,
+      dataDir: options.dataDir,
+      lanDiscovery: !this.silent,
+    });
   }
 
   get isMining(): boolean {
@@ -78,7 +86,10 @@ export class SphereNode {
     await this.peerBook.load();
     this.bindP2P();
 
-    this.p2pPort = await this.p2p.listen(this.options.p2pPort);
+    this.p2pPort = await this.p2p.listen(this.options.p2pPort, {
+      bootstrap: this.bootstrapPeers,
+      announce: this.options.advertisedP2pUrl,
+    });
     const advertised =
       this.options.advertisedP2pUrl?.replace(/\/$/, '') ?? `ws://127.0.0.1:${this.p2pPort}`;
     this.p2p.setAdvertisedUrl(advertised);
@@ -88,7 +99,9 @@ export class SphereNode {
 
     this.log(`REST API on http://127.0.0.1:${this.httpPort}`);
     this.log(`P2P on ${advertised}`);
-    this.log(`height=${this.blockchain.height} difficulty=${this.blockchain.difficulty}`);
+    this.log(
+      `height=${this.blockchain.height} bits=0x${this.blockchain.bits.toString(16)} work=${this.blockchain.difficulty}`,
+    );
 
     const toDial = [...new Set([...this.bootstrapPeers, ...this.peerBook.list()])];
     for (const peer of toDial) {
@@ -142,10 +155,10 @@ export class SphereNode {
     if (!this.minerAddress || !isValidAddress(this.minerAddress)) {
       throw new ValidationError('Mining requires a valid miner address');
     }
-    const candidate = this.buildCandidate();
-    const mined = await mineBlock(candidate.header);
+    const candidate = await this.buildCandidate();
+    const mined = await mineBlock(candidate.header, { pow: this.config.pow });
     const block: Block = { ...candidate, header: mined.header, hash: mined.hash };
-    this.acceptLocalBlock(block);
+    await this.acceptLocalBlock(block);
     return block;
   }
 
@@ -154,7 +167,7 @@ export class SphereNode {
     validateTransactionStructure(tx);
     this.mempool.add(
       tx,
-      (address) => this.blockchain.getAccount(address),
+      (txid, vout) => this.blockchain.getUtxo(txid, vout),
       (hash) => this.blockchain.hasTransaction(hash),
     );
     this.p2p.broadcast({ type: 'NEW_TRANSACTION', data: tx });
@@ -176,42 +189,35 @@ export class SphereNode {
     if (!this.faucet) {
       throw new ValidationError('Faucet is disabled (set SPHERE_FAUCET_PRIVATE_KEY)');
     }
-    const fromAddr = this.faucet.fromAddress;
-    const confirmed = this.blockchain.getAccount(fromAddr);
-    const pending = this.mempool
-      .getAll()
-      .filter((tx) => tx.from === fromAddr)
-      .sort((a, b) => a.nonce - b.nonce);
-    const nonce = (pending.at(-1)?.nonce ?? confirmed.nonce) + 1;
-    const tx = this.faucet.drip(to, amountOrbs, nonce, (address) =>
-      this.blockchain.getAccount(address),
-    );
+    const tx = this.faucet.drip(to, amountOrbs, this.spendableUtxos(this.faucet.fromAddress));
     return this.submitTransaction(tx);
   }
 
   private async loadChain(): Promise<void> {
     const snapshot = await this.store.load();
+    try {
+      this.blockchain = snapshot
+        ? await Blockchain.open(this.config, snapshot)
+        : await Blockchain.open(this.config);
+    } catch (error) {
+      throw new Error(`Failed to load chain snapshot: ${(error as Error).message}`);
+    }
     if (!snapshot) {
       await this.persist();
       return;
     }
-    try {
-      this.blockchain.hydrateFromSnapshot(snapshot);
-      this.log(`loaded ${snapshot.length} blocks from disk`);
-    } catch (error) {
-      throw new Error(`Failed to load chain snapshot: ${(error as Error).message}`);
-    }
+    this.log(`loaded ${snapshot.length} blocks from disk`);
   }
 
   private bindP2P(): void {
     this.p2p.on('block', (block: Block, from: PeerSocket) => {
-      this.onPeerBlock(block, from);
+      void this.onPeerBlock(block, from);
     });
     this.p2p.on('transaction', (tx: Transaction, from: PeerSocket) => {
       this.onPeerTransaction(tx, from);
     });
     this.p2p.on('chain', (chain: Block[]) => {
-      this.onPeerChain(chain);
+      void this.onPeerChain(chain);
     });
     this.p2p.on('queryChain', (from: PeerSocket) => {
       this.p2p.send(from, { type: 'RESPONSE_CHAIN', data: this.blockchain.getBlocks() });
@@ -282,7 +288,7 @@ export class SphereNode {
       }
       this.mempool.add(
         tx,
-        (address) => this.blockchain.getAccount(address),
+        (txid, vout) => this.blockchain.getUtxo(txid, vout),
         (hash) => this.blockchain.hasTransaction(hash),
       );
       this.p2p.broadcast({ type: 'NEW_TRANSACTION', data: tx }, from);
@@ -292,35 +298,42 @@ export class SphereNode {
     }
   }
 
-  private onPeerBlock(block: Block, from: PeerSocket): void {
-    if (this.blockchain.getBlockByHash(block.hash)) return;
-    try {
-      this.blockchain.addBlock(block);
-      this.afterAcceptedBlock(block, from);
-      this.log(`accepted block #${block.header.index} ${block.hash.slice(0, 12)}… from peer`);
-    } catch {
-      if (block.header.index > this.blockchain.height) {
-        this.p2p.send(from, { type: 'QUERY_CHAIN' });
+  private async onPeerBlock(block: Block, from: PeerSocket): Promise<void> {
+    await this.withChain(async () => {
+      if (this.blockchain.getBlockByHash(block.hash)) return;
+      try {
+        await this.blockchain.addBlock(block);
+        this.afterAcceptedBlock(block, from);
+        this.log(`accepted block #${block.header.index} ${block.hash.slice(0, 12)}… from peer`);
+      } catch {
+        if (block.header.index > this.blockchain.height) {
+          this.p2p.send(from, { type: 'QUERY_CHAIN' });
+        }
       }
-    }
+    });
   }
 
-  private onPeerChain(chain: Block[]): void {
-    if (!Array.isArray(chain) || chain.length <= this.blockchain.length) return;
-    const previous = this.blockchain.getBlocks();
-    const fork = this.blockchain.forkIndex(chain);
-    try {
-      if (!this.blockchain.replaceChain(chain)) return;
-    } catch (error) {
-      this.log(`rejected peer chain: ${(error as Error).message}`);
-      return;
-    }
+  private async onPeerChain(chain: Block[]): Promise<void> {
+    const applied = await this.withChain(async () => {
+      if (!Array.isArray(chain) || chain.length <= this.blockchain.length) return null;
+      const previous = this.blockchain.getBlocks();
+      const fork = this.blockchain.forkIndex(chain);
+      try {
+        if (!(await this.blockchain.replaceChain(chain))) return null;
+      } catch (error) {
+        this.log(`rejected peer chain: ${(error as Error).message}`);
+        return null;
+      }
+      return { previous, fork };
+    });
+    if (!applied) return;
+    const { previous, fork } = applied;
 
     this.mempool.removeMany(collectTxHashes(chain));
     const orphaned = previous.slice(fork).flatMap((block) => block.transactions);
     this.mempool.requeueValid(
       orphaned,
-      (address) => this.blockchain.getAccount(address),
+      (txid, vout) => this.blockchain.getUtxo(txid, vout),
       (hash) => this.blockchain.hasTransaction(hash),
     );
     this.interruptMining();
@@ -328,12 +341,14 @@ export class SphereNode {
     this.log(`reorg to height ${this.blockchain.height}`);
   }
 
-  private acceptLocalBlock(block: Block): void {
-    this.blockchain.addBlock(block);
-    this.afterAcceptedBlock(block);
-    this.log(
-      `mined block #${block.header.index} nonce=${block.header.nonce} ${block.hash.slice(0, 12)}…`,
-    );
+  private async acceptLocalBlock(block: Block): Promise<void> {
+    await this.withChain(async () => {
+      await this.blockchain.addBlock(block);
+      this.afterAcceptedBlock(block);
+      this.log(
+        `mined block #${block.header.index} nonce=${block.header.nonce} ${block.hash.slice(0, 12)}…`,
+      );
+    });
   }
 
   private afterAcceptedBlock(block: Block, from?: PeerSocket): void {
@@ -343,10 +358,10 @@ export class SphereNode {
     this.persist();
   }
 
-  private buildCandidate(): Block {
+  private async buildCandidate(): Promise<Block> {
     const userTxs = this.mempool.selectForBlock(
       this.config.maxTransactionsPerBlock - 1,
-      (address) => this.blockchain.getAccount(address),
+      (txid, vout) => this.blockchain.getUtxo(txid, vout),
     );
     return createCandidateBlock(this.blockchain, this.minerAddress!, userTxs);
   }
@@ -355,17 +370,36 @@ export class SphereNode {
     while (this.mining) {
       this.mineAbort = new AbortController();
       try {
-        const candidate = this.buildCandidate();
-        const mined = await mineBlock(candidate.header, { signal: this.mineAbort.signal });
+        const candidate = await this.buildCandidate();
+        const mined = await mineBlock(candidate.header, {
+          signal: this.mineAbort.signal,
+          pow: this.config.pow,
+        });
         if (!this.mining) break;
         const block: Block = { ...candidate, header: mined.header, hash: mined.hash };
-        this.acceptLocalBlock(block);
+        await this.acceptLocalBlock(block);
       } catch (error) {
         if (isAbortError(error)) continue;
         this.log(`mining error: ${(error as Error).message}`);
         await sleep(1000);
       }
     }
+  }
+
+  spendableUtxos(address: string): Utxo[] {
+    const reserved = this.mempool.reservedOutpoints();
+    return this.blockchain
+      .getUtxos(address)
+      .filter((utxo) => !reserved.has(outpointKey(utxo.txid, utxo.vout)));
+  }
+
+  private withChain<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chainLock.then(fn, fn);
+    this.chainLock = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private persist(): void {

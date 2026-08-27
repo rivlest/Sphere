@@ -2,6 +2,18 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
 import { OrbMark } from './OrbMark';
 
+function BrandMark() {
+  return (
+    <>
+      <OrbMark />
+      <div>
+        <p className="text-lg font-semibold leading-tight tracking-wide">Sphere</p>
+        <p className="text-xs uppercase tracking-[0.2em] text-mute">Portfel SPH</p>
+      </div>
+    </>
+  );
+}
+
 export function Shell() {
   const { wallet, lock } = useWallet();
   const navigate = useNavigate();
@@ -16,13 +28,15 @@ export function Shell() {
   return (
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col px-4 py-6">
       <header className="mb-8 flex items-center justify-between gap-3">
-        <Link to={authed ? '/dashboard' : '/'} className="flex items-center gap-3">
-          <OrbMark />
-          <div>
-            <p className="text-lg font-semibold leading-tight tracking-wide">Sphere</p>
-            <p className="text-xs uppercase tracking-[0.2em] text-mute">Portfel SPH</p>
+        {authed && location.pathname !== '/dashboard' ? (
+          <Link to="/dashboard" className="flex items-center gap-3">
+            <BrandMark />
+          </Link>
+        ) : (
+          <div className="flex items-center gap-3">
+            <BrandMark />
           </div>
-        </Link>
+        )}
         {authed && location.pathname !== '/' && (
           <button type="button" className="btn-danger text-xs" onClick={onLogout}>
             Wyloguj

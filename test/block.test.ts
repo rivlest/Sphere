@@ -39,42 +39,44 @@ describe('merkle root', () => {
 });
 
 describe('block validation', () => {
-  it('accepts the hardcoded genesis block without proof-of-work', () => {
-    const genesis = createGenesisBlock(DEFAULT_CONFIG);
+  it('accepts genesis with trivial nBits (nonce 0 is expected to meet the target)', async () => {
+    const genesis = await createGenesisBlock(DEFAULT_CONFIG);
     expect(genesis.header.index).toBe(0);
-    expect(genesis.header.nonce).toBe(0);
+    expect(genesis.header.bits).toBe(DEFAULT_CONFIG.initialBits);
     expect(genesis.header.previousHash).toBe('0'.repeat(64));
-    validateBlockStructure(genesis, DEFAULT_CONFIG);
+    await validateBlockStructure(genesis, DEFAULT_CONFIG);
   });
 
-  it('rejects a tampered merkle root', () => {
-    const genesis = createGenesisBlock(TEST_CONFIG);
+  it('rejects a tampered merkle root', async () => {
+    const genesis = await createGenesisBlock(TEST_CONFIG);
     const tampered = {
       ...genesis,
       header: { ...genesis.header, merkleRoot: 'ab'.repeat(32) },
     };
-    expect(() => validateBlockStructure(tampered, TEST_CONFIG)).toThrow(ValidationError);
+    await expect(validateBlockStructure(tampered, TEST_CONFIG)).rejects.toThrow(ValidationError);
   });
 
-  it('rejects a hash that does not match the header', () => {
-    const genesis = createGenesisBlock(TEST_CONFIG);
+  it('rejects a hash that does not match the header', async () => {
+    const genesis = await createGenesisBlock(TEST_CONFIG);
     const fake = { ...genesis, hash: '11'.repeat(32) };
-    expect(() => validateBlockPoW(fake, { skipGenesisPow: false })).toThrow(ValidationError);
+    await expect(validateBlockPoW(fake, TEST_CONFIG)).rejects.toThrow(ValidationError);
   });
 
-  it('builds a candidate whose merkle root matches its transactions', () => {
-    const genesis = createGenesisBlock(TEST_CONFIG);
-    const block = assembleBlock(
+  it('builds a candidate whose merkle root matches its transactions', async () => {
+    const genesis = await createGenesisBlock(TEST_CONFIG);
+    const block = await assembleBlock(
       {
         index: 0,
         timestamp: genesis.header.timestamp,
         previousHash: genesis.header.previousHash,
-        nonce: 0,
-        difficulty: TEST_CONFIG.initialDifficulty,
+        nonce: genesis.header.nonce,
+        bits: TEST_CONFIG.initialBits,
         version: TEST_CONFIG.blockVersion,
       },
       genesis.transactions,
+      TEST_CONFIG,
     );
     expect(block.header.merkleRoot).toBe(genesis.header.merkleRoot);
+    expect(block.hash).toBe(genesis.hash);
   });
 });

@@ -1,8 +1,7 @@
 import { ORBS_PER_SPH } from '../types.js';
 import { ValidationError } from '../core/errors.js';
 import { isValidAddress, addressFromPrivateKey } from '../wallet/keys.js';
-import { createSignedTransaction } from '../core/transaction.js';
-import type { AccountSnapshot } from '../core/transaction.js';
+import { createSignedTransaction, type Utxo } from '../core/transaction.js';
 import type { Transaction } from '../types.js';
 
 const DEFAULT_MAX_ORBS = ORBS_PER_SPH;
@@ -27,12 +26,7 @@ export class TestFaucet {
     return this.from;
   }
 
-  drip(
-    to: string,
-    amountOrbs: number,
-    nonce: number,
-    getAccount: (address: string) => AccountSnapshot,
-  ): Transaction {
+  drip(to: string, amountOrbs: number, utxos: Utxo[]): Transaction {
     if (!isValidAddress(to)) {
       throw new ValidationError('Invalid recipient address');
     }
@@ -50,19 +44,18 @@ export class TestFaucet {
       throw new ValidationError('Faucet daily limit reached for this address');
     }
 
-    const sender = getAccount(this.from);
-    const pendingReserved = 0;
-    if (sender.balance - pendingReserved < amountOrbs) {
+    const available = utxos.reduce((sum, utxo) => sum + utxo.amount, 0);
+    if (available < amountOrbs) {
       throw new ValidationError('Faucet wallet has insufficient balance');
     }
 
     const tx = createSignedTransaction(
       {
-        from: this.from,
+        utxos,
         to,
         amount: amountOrbs,
         fee: 0,
-        nonce,
+        changeAddress: this.from,
       },
       this.privateKey,
     );

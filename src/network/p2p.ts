@@ -1,144 +1,278 @@
 import { EventEmitter } from 'node:events';
-import { WebSocketServer, WebSocket } from 'ws';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { createLibp2p, type Libp2p } from 'libp2p';
+import { webSockets } from '@libp2p/websockets';
+import { tcp } from '@libp2p/tcp';
+import { noise } from '@chainsafe/libp2p-noise';
+import { yamux } from '@chainsafe/libp2p-yamux';
+import { identify } from '@libp2p/identify';
+import { ping } from '@libp2p/ping';
+import { kadDHT } from '@libp2p/kad-dht';
+import { bootstrap } from '@libp2p/bootstrap';
+import { mdns } from '@libp2p/mdns';
+import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
+import { multiaddr } from '@multiformats/multiaddr';
+import type { Connection, PeerId, PrivateKey, Stream } from '@libp2p/interface';
 import type { P2PMessage } from '../types.js';
 import { decodeMessage, encodeMessage } from './messages.js';
+import {
+  listenMultiaddrs,
+  normalizePeerAddress,
+  stripPeerId,
+  toMultiaddrString,
+  wsListenPort,
+} from './multiaddr.js';
+
+export const SPHERE_SYNC_PROTOCOL = '/sphere/sync/1.0.0';
+export const SPHERE_DHT_PROTOCOL = '/sphere/kad/1.0.0';
 
 export interface PeerSocket {
-  id: number;
+  id: string;
   url?: string;
-  socket: WebSocket;
 }
 
+export interface P2PNetworkOptions {
+  silent?: boolean;
+  dataDir: string;
+  lanDiscovery?: boolean;
+}
+
+const MAX_FRAME = 50 * 1024 * 1024;
+
 export class P2PNetwork extends EventEmitter {
-  private server: WebSocketServer | null = null;
-  private peers = new Map<number, PeerSocket>();
-  private outbound = new Set<string>();
-  private nextId = 1;
-  private listenPort = 0;
+  private node: Libp2p | null = null;
   private advertisedUrl?: string;
   private readonly silent: boolean;
+  private readonly dataDir: string;
+  private readonly lanDiscovery: boolean;
+  private readonly streams = new Map<string, Set<Stream>>();
+  private readonly buffers = new Map<Stream, Buffer>();
+  private readonly opening = new Set<string>();
 
-  constructor(advertisedUrl?: string, silent = false) {
+  constructor(options: P2PNetworkOptions) {
     super();
-    this.advertisedUrl = advertisedUrl;
-    this.silent = silent;
+    this.silent = Boolean(options.silent);
+    this.dataDir = options.dataDir;
+    this.lanDiscovery = options.lanDiscovery ?? true;
   }
 
   setAdvertisedUrl(url: string): void {
-    this.advertisedUrl = url;
+    this.advertisedUrl = url.replace(/\/$/, '');
   }
 
   getAdvertisedUrl(): string | undefined {
     return this.advertisedUrl;
   }
 
-  getOutboundUrls(): string[] {
-    return [...this.outbound];
-  }
-
   get peerCount(): number {
-    return this.peers.size;
+    return this.node?.getPeers().length ?? 0;
   }
 
   getPeerUrls(): string[] {
-    const urls = [...this.peers.values()]
-      .map((peer) => peer.url)
-      .filter((url): url is string => Boolean(url));
+    const urls: string[] = [];
     if (this.advertisedUrl) urls.push(this.advertisedUrl);
+    for (const conn of this.node?.getConnections() ?? []) {
+      urls.push(conn.remoteAddr.toString());
+    }
     return [...new Set(urls)];
   }
 
-  async listen(port: number): Promise<number> {
-    this.listenPort = port;
-    this.server = new WebSocketServer({ port, maxPayload: 50 * 1024 * 1024 });
-    this.server.on('connection', (socket, request) => {
-      const forwarded = request.socket.remoteAddress;
-      this.attach(socket, undefined, `inbound:${forwarded ?? 'unknown'}`);
-    });
-    await new Promise<void>((resolve, reject) => {
-      this.server!.once('listening', () => resolve());
-      this.server!.once('error', reject);
-    });
-    const address = this.server.address();
-    if (address && typeof address === 'object') {
-      this.listenPort = address.port;
-    }
-    return this.listenPort;
-  }
+  async listen(
+    port: number,
+    options: { bootstrap?: string[]; announce?: string } = {},
+  ): Promise<number> {
+    const privateKey = await loadOrCreatePrivateKey(this.dataDir);
+    const bootstrapList = (options.bootstrap ?? [])
+      .map((addr) => {
+        try {
+          return toMultiaddrString(addr);
+        } catch {
+          return '';
+        }
+      })
+      .filter(Boolean);
 
-  async connect(url: string): Promise<void> {
-    const normalized = normalizePeerUrl(url);
-    if (this.advertisedUrl && normalizePeerUrl(this.advertisedUrl) === normalized) return;
-    if (this.outbound.has(normalized)) return;
-    if (this.outbound.size >= 16) return;
-    this.outbound.add(normalized);
+    const announce = options.announce
+      ? [toMultiaddrString(options.announce)]
+      : undefined;
 
-    await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(normalized);
-      const onError = (error: Error) => {
-        this.outbound.delete(normalized);
-        reject(error);
-      };
-      socket.once('error', onError);
-      socket.once('open', () => {
-        socket.off('error', onError);
-        this.attach(socket, normalized);
-        resolve();
+    this.node = await createLibp2p({
+      start: false,
+      privateKey,
+      addresses: {
+        listen: listenMultiaddrs(port),
+        announce,
+      },
+      transports: [webSockets(), tcp()],
+      connectionEncrypters: [noise()],
+      streamMuxers: [yamux()],
+      peerDiscovery: [
+        ...(bootstrapList.length > 0 ? [bootstrap({ list: bootstrapList, timeout: 1_000 })] : []),
+        ...(this.lanDiscovery ? [mdns({ serviceTag: '_sphere._udp.local' })] : []),
+      ],
+      connectionManager: {
+        maxConnections: 128,
+        maxIncomingPendingConnections: 16,
+      },
+      services: {
+        identify: identify(),
+        ping: ping(),
+        dht: kadDHT({
+          protocol: SPHERE_DHT_PROTOCOL,
+          clientMode: false,
+          allowQueryWithZeroPeers: true,
+        }),
+      },
+    });
+
+    await this.node.handle(SPHERE_SYNC_PROTOCOL, (stream, connection) => {
+      this.attachStream(stream, connection);
+    });
+
+    this.node.addEventListener('peer:connect', (event) => {
+      void this.ensureSyncStream(event.detail);
+    });
+    this.node.addEventListener('peer:disconnect', (event) => {
+      this.dropPeer(event.detail.toString());
+    });
+    this.node.addEventListener('peer:discovery', (event) => {
+      const info = event.detail;
+      if (info.id.toString() === this.node?.peerId.toString()) return;
+      if ((this.node?.getConnections(info.id).length ?? 0) > 0) return;
+      void this.node?.dial(info.multiaddrs).catch((error: unknown) => {
+        this.log('dial failed', `${info.id.toString()} ${(error as Error).message}`);
       });
     });
+
+    await this.node.start();
+    const addrs = this.node.getMultiaddrs().map((addr) => addr.toString());
+    const listenPort = wsListenPort(addrs);
+    this.log('listening', addrs.join(' '));
+    return listenPort;
+  }
+
+  async connect(addr: string): Promise<void> {
+    if (!this.node) throw new Error('P2P is not listening');
+    const ma = toMultiaddrString(addr);
+    if (this.isSelf(ma)) return;
+    const stream = await this.node.dialProtocol(multiaddr(ma), SPHERE_SYNC_PROTOCOL);
+    const conn = this.node
+      .getConnections()
+      .find((item) => item.streams.some((open) => open.id === stream.id));
+    if (!conn) {
+      stream.abort(new Error('Missing connection after dial'));
+      return;
+    }
+    this.attachStream(stream, conn);
   }
 
   broadcast(message: P2PMessage, except?: PeerSocket): void {
-    const raw = encodeMessage(message);
-    for (const peer of this.peers.values()) {
-      if (except && peer.id === except.id) continue;
-      if (peer.socket.readyState === WebSocket.OPEN) {
-        peer.socket.send(raw);
-      }
+    for (const [peerId, streams] of this.streams) {
+      if (except && peerId === except.id) continue;
+      const stream = firstOpen(streams);
+      if (stream) writeFrame(stream, message);
     }
   }
 
   send(peer: PeerSocket, message: P2PMessage): void {
-    this.sendTo(peer.socket, message);
+    const stream = firstOpen(this.streams.get(peer.id));
+    if (stream) writeFrame(stream, message);
   }
 
   async close(): Promise<void> {
-    for (const peer of this.peers.values()) {
-      peer.socket.close();
+    for (const streams of this.streams.values()) {
+      for (const stream of streams) {
+        stream.abort(new Error('shutdown'));
+      }
     }
-    this.peers.clear();
-    this.outbound.clear();
-    if (this.server) {
-      await new Promise<void>((resolve) => this.server!.close(() => resolve()));
-      this.server = null;
-    }
-  }
-
-  private sendTo(socket: WebSocket, message: P2PMessage): void {
-    if (socket.readyState === WebSocket.OPEN) {
-      socket.send(encodeMessage(message));
+    this.streams.clear();
+    this.buffers.clear();
+    if (this.node) {
+      await this.node.stop();
+      this.node = null;
     }
   }
 
-  private attach(socket: WebSocket, url?: string, inboundLabel?: string): void {
-    const peer: PeerSocket = { id: this.nextId++, url, socket };
-    this.peers.set(peer.id, peer);
-    this.log('connected', url ?? inboundLabel ?? String(peer.id));
+  private isSelf(addr: string): boolean {
+    const target = stripPeerId(normalizePeerAddress(addr));
+    const self = [
+      this.advertisedUrl ? toMultiaddrString(this.advertisedUrl) : '',
+      ...(this.node?.getMultiaddrs().map((item) => item.toString()) ?? []),
+    ]
+      .filter(Boolean)
+      .map((item) => stripPeerId(item));
+    return self.includes(target);
+  }
 
-    socket.on('message', (data) => {
-      const message = decodeMessage(data.toString());
-      if (!message) return;
-      this.dispatch(message, peer);
+  private async ensureSyncStream(peerId: PeerId): Promise<void> {
+    const id = peerId.toString();
+    if (this.streams.get(id)?.size) return;
+    if (this.opening.has(id) || !this.node) return;
+    if (id === this.node.peerId.toString()) return;
+    this.opening.add(id);
+    try {
+      const stream = await this.node.dialProtocol(peerId, SPHERE_SYNC_PROTOCOL);
+      const conn = this.node.getConnections(peerId)[0];
+      if (conn) this.attachStream(stream, conn);
+    } catch (error) {
+      this.log('sync stream failed', `${id} ${(error as Error).message}`);
+    } finally {
+      this.opening.delete(id);
+    }
+  }
+
+  private attachStream(stream: Stream, connection: Connection): void {
+    const id = connection.remotePeer.toString();
+    const existing = this.streams.get(id) ?? new Set();
+    if (existing.has(stream)) return;
+    const first = existing.size === 0;
+    existing.add(stream);
+    this.streams.set(id, existing);
+    this.buffers.set(stream, Buffer.alloc(0));
+    stream.maxReadBufferLength = MAX_FRAME + 8;
+
+    const peer: PeerSocket = { id, url: connection.remoteAddr.toString() };
+    stream.addEventListener('message', (event) => {
+      this.onBytes(stream, peer, Buffer.from(event.data.subarray()));
     });
-    socket.on('close', () => {
-      this.peers.delete(peer.id);
-      if (url) this.outbound.delete(url);
-      this.log('disconnected', url ?? inboundLabel ?? String(peer.id));
+    stream.addEventListener('close', () => {
+      existing.delete(stream);
+      this.buffers.delete(stream);
+      if (existing.size === 0) this.streams.delete(id);
     });
-    socket.on('error', () => {
-      socket.close();
-    });
-    this.emit('peerOpen', peer);
+
+    if (first) {
+      this.log('connected', `${id} ${peer.url}`);
+      this.emit('peerOpen', peer);
+    }
+  }
+
+  private onBytes(stream: Stream, peer: PeerSocket, chunk: Buffer): void {
+    let buf = Buffer.concat([this.buffers.get(stream) ?? Buffer.alloc(0), chunk]);
+    while (buf.length >= 4) {
+      const length = buf.readUInt32BE(0);
+      if (length > MAX_FRAME) {
+        stream.abort(new Error('P2P frame too large'));
+        return;
+      }
+      if (buf.length < 4 + length) break;
+      const raw = buf.subarray(4, 4 + length).toString('utf8');
+      buf = buf.subarray(4 + length);
+      const message = decodeMessage(raw);
+      if (message) this.dispatch(message, peer);
+    }
+    this.buffers.set(stream, buf);
+  }
+
+  private dropPeer(id: string): void {
+    const streams = this.streams.get(id);
+    if (!streams) return;
+    for (const stream of streams) {
+      this.buffers.delete(stream);
+    }
+    this.streams.delete(id);
+    this.log('disconnected', id);
   }
 
   private dispatch(message: P2PMessage, from: PeerSocket): void {
@@ -171,6 +305,34 @@ export class P2PNetwork extends EventEmitter {
   }
 }
 
-export function normalizePeerUrl(url: string): string {
-  return url.trim().replace(/\/$/, '');
+function writeFrame(stream: Stream, message: P2PMessage): void {
+  const payload = Buffer.from(encodeMessage(message), 'utf8');
+  const frame = Buffer.alloc(4 + payload.length);
+  frame.writeUInt32BE(payload.length, 0);
+  payload.copy(frame, 4);
+  stream.send(frame);
 }
+
+function firstOpen(streams: Set<Stream> | undefined): Stream | undefined {
+  if (!streams) return undefined;
+  for (const stream of streams) {
+    if (stream.status === 'open') return stream;
+  }
+  return undefined;
+}
+
+async function loadOrCreatePrivateKey(dataDir: string): Promise<PrivateKey> {
+  const file = path.join(dataDir, 'libp2p.key');
+  try {
+    return privateKeyFromProtobuf(await readFile(file));
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'ENOENT') throw error;
+    const key = await generateKeyPair('Ed25519');
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(file, Buffer.from(privateKeyToProtobuf(key)));
+    return key;
+  }
+}
+
+export { normalizePeerAddress as normalizePeerUrl, toMultiaddrString };

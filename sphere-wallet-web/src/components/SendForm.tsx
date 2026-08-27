@@ -4,7 +4,7 @@ import { useWallet } from '../context/WalletContext';
 import { ApiError, getBalance, submitTransaction } from '../lib/api';
 import { mapNodeError, SEND_ERROR_COPY, validateSendForm } from '../lib/sendValidation';
 import { formatOrbsToSph } from '../lib/units';
-import { DEFAULT_FEE_SPH } from '../types';
+import { DEFAULT_FEE_SPH, type Utxo } from '../types';
 
 type Phase = 'form' | 'confirm' | 'sending' | 'success' | 'error';
 
@@ -17,7 +17,7 @@ export function SendForm() {
   const [feeSph, setFeeSph] = useState(DEFAULT_FEE_SPH);
   const [balanceOrbs, setBalanceOrbs] = useState(0);
   const [phase, setPhase] = useState<Phase>('form');
-  const [nonce, setNonce] = useState<number | null>(null);
+  const [utxos, setUtxos] = useState<Utxo[]>([]);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [validation, setValidation] = useState(() =>
@@ -26,7 +26,10 @@ export function SendForm() {
   const [attempted, setAttempted] = useState(false);
 
   useEffect(() => {
-    void getBalance(sender).then((account) => setBalanceOrbs(account.balance));
+    void getBalance(sender).then((account) => {
+      setBalanceOrbs(account.balance);
+      setUtxos(account.utxos ?? []);
+    });
   }, [sender]);
 
   useEffect(() => {
@@ -42,6 +45,7 @@ export function SendForm() {
     try {
       const account = await getBalance(sender);
       setBalanceOrbs(account.balance);
+      setUtxos(account.utxos ?? []);
       const checked = validateSendForm({
         to,
         amountSph,
@@ -51,10 +55,9 @@ export function SendForm() {
       });
       setValidation(checked);
       if (!checked.valid) return;
-      setNonce(account.nextNonce);
       setPhase('confirm');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Nie udało się pobrać nonce');
+      setError(err instanceof Error ? err.message : 'Nie udało się pobrać salda');
       setPhase('error');
     }
   }
@@ -64,6 +67,7 @@ export function SendForm() {
     setError(null);
     try {
       const account = await getBalance(sender);
+      setUtxos(account.utxos ?? []);
       const checked = validateSendForm({
         to,
         amountSph,
@@ -80,7 +84,7 @@ export function SendForm() {
         to: to.trim().toLowerCase(),
         amount: checked.amountOrbs,
         fee: checked.feeOrbs,
-        nonce: account.nextNonce,
+        utxos: account.utxos ?? utxos,
       });
       const result = await submitTransaction(tx);
       setTxHash(result.hash);
@@ -139,12 +143,6 @@ export function SendForm() {
               {formatOrbsToSph(validation.amountOrbs + validation.feeOrbs)} SPH
             </dd>
           </div>
-          {nonce !== null && (
-            <div className="flex justify-between gap-4">
-              <dt className="text-mute">Nonce</dt>
-              <dd className="font-mono">{nonce}</dd>
-            </div>
-          )}
         </dl>
         <div className="grid grid-cols-2 gap-3">
           <button type="button" className="btn-secondary" onClick={() => setPhase('form')} disabled={phase === 'sending'}>

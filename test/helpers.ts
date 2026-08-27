@@ -2,23 +2,23 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_CONFIG, type ChainConfig } from '../src/types.js';
+import type { Block } from '../src/types.js';
 import { Blockchain } from '../src/core/blockchain.js';
 import { createCandidateBlock } from '../src/core/block.js';
 import { mineBlock } from '../src/core/proofOfWork.js';
-import type { Block } from '../src/types.js';
-import { SphereNode } from '../src/node.js';
 import { faucetAddress } from '../src/core/genesis.js';
+import { SphereNode } from '../src/node.js';
 
 export const TEST_CONFIG: ChainConfig = {
   ...DEFAULT_CONFIG,
-  initialDifficulty: 1,
+  retargetInterval: 4,
 };
 
 export async function mineEmptyBlock(chain: Blockchain, minerAddress: string): Promise<Block> {
-  const candidate = createCandidateBlock(chain, minerAddress, []);
-  const mined = await mineBlock(candidate.header);
+  const candidate = await createCandidateBlock(chain, minerAddress, []);
+  const mined = await mineBlock(candidate.header, { pow: chain.config.pow });
   const block: Block = { ...candidate, header: mined.header, hash: mined.hash };
-  chain.addBlock(block);
+  await chain.addBlock(block);
   return block;
 }
 

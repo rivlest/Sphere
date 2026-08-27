@@ -8,13 +8,13 @@ program
   .name('sphere')
   .description('Sphere Proof-of-Work node')
   .option('--port <number>', 'REST API port', '3001')
-  .option('--p2p-port <number>', 'P2P WebSocket port', '6001')
+  .option('--p2p-port <number>', 'P2P listen port (WebSocket; TCP is port+1 when fixed)', '6001')
   .option('--peers <urls>', 'comma-separated extra peer URLs (merged with the default seed list)', '')
   .option('--no-default-seeds', 'do not dial the compiled seed list')
   .option('--p2p-url <url>', 'public WebSocket URL advertised to peers, e.g. ws://1.2.3.4:6001')
   .option('--mine', 'mine blocks continuously')
   .option('--miner-address <address>', 'address that receives block rewards')
-  .option('--data-dir <path>', 'JSON snapshot directory', 'data')
+  .option('--data-dir <path>', 'chain data directory (chain.dat + chain.idx)', 'data')
   .parse(process.argv);
 
 const opts = program.opts<{

@@ -37,8 +37,8 @@ program
     const body = await requestJson(`${trimSlash(cmd.node)}/balance/${address}`);
     console.log(`Address:    ${body.address}`);
     console.log(`Balance:    ${body.balanceSph} SPH (${body.balance} Orbs)`);
-    console.log(`Nonce:      ${body.nonce}`);
-    console.log(`Next nonce: ${body.nextNonce}`);
+    const utxos = Array.isArray(body.utxos) ? body.utxos.length : 0;
+    console.log(`UTXOs:      ${utxos}`);
   });
 
 program
@@ -59,13 +59,19 @@ program
       const fee = parseSphToOrbs(cmd.fee);
       const base = trimSlash(cmd.node);
       const account = await requestJson(`${base}/balance/${wallet.address}`);
+      const utxos = (account.utxos ?? []) as Array<{
+        txid: string;
+        vout: number;
+        address: string;
+        amount: number;
+      }>;
       const tx = createSignedTransaction(
         {
-          from: wallet.address,
+          utxos,
           to: cmd.to,
           amount,
           fee,
-          nonce: Number(account.nextNonce),
+          changeAddress: wallet.address,
         },
         wallet.privateKey,
       );

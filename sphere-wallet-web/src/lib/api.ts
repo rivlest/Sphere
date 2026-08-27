@@ -1,6 +1,7 @@
 import type {
   AddressTransaction,
   BalanceResponse,
+  MarketSnapshot,
   NodeStatus,
   PriceResponse,
   Transaction,
@@ -44,11 +45,15 @@ export async function getBalance(address: string): Promise<BalanceResponse> {
 }
 
 /**
- * Fetch SPH/USD. Today this hits the node's simulated GET /price.
- * When SPH lists on an exchange, replace the URL and map the response here.
+ * SPH/USD from the node, which proxies a real market URL (SPHERE_PRICE_URL).
+ * Map a different exchange response here if the wallet should talk to it directly.
  */
 export async function getPrice(): Promise<PriceResponse> {
   return requestJson<PriceResponse>('/price');
+}
+
+export async function getMarket(): Promise<MarketSnapshot> {
+  return requestJson<MarketSnapshot>('/market');
 }
 
 export async function submitTransaction(tx: Transaction): Promise<{ accepted: boolean; hash: string }> {
@@ -78,7 +83,7 @@ async function transactionsFromBlocks(address: string): Promise<AddressTransacti
   const found: AddressTransaction[] = [];
   for (const block of data.blocks) {
     for (const tx of block.transactions) {
-      if (tx.from === address || tx.to === address) {
+      if (tx.to === address || tx.from === address || tx.outputs?.some((o) => o.address === address)) {
         found.push({
           ...tx,
           status: 'confirmed',

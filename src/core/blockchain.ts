@@ -8,40 +8,46 @@ import {
 import { ValidationError } from './errors.js';
 import { createGenesisBlock } from './genesis.js';
 import { validateBlockStructure } from './block.js';
-import { computeNextDifficulty } from './proofOfWork.js';
-import { validateTransaction, type AccountSnapshot } from './transaction.js';
+import { computeNextBits } from './retarget.js';
+import { workRatio } from './bits.js';
+import {
+  outpointKey,
+  outputSum,
+  transactionFee,
+  validateTransaction,
+  type Utxo,
+} from './transaction.js';
 import { blockRewardOrbs } from './units.js';
 
-export type AccountMap = Map<string, AccountSnapshot>;
+export type UtxoMap = Map<string, Utxo>;
 
-function cloneAccounts(accounts: AccountMap): AccountMap {
-  const copy: AccountMap = new Map();
-  for (const [address, account] of accounts) {
-    copy.set(address, { ...account });
+function cloneUtxos(utxos: UtxoMap): UtxoMap {
+  const copy: UtxoMap = new Map();
+  for (const [key, utxo] of utxos) {
+    copy.set(key, { ...utxo });
   }
   return copy;
 }
 
-export function emptyAccount(): AccountSnapshot {
-  return { balance: 0, nonce: 0 };
-}
-
 export class Blockchain {
   readonly config: ChainConfig;
-  private chain: Block[];
-  private accounts: AccountMap = new Map();
+  private chain: Block[] = [];
+  private utxos: UtxoMap = new Map();
   private txHashes = new Set<string>();
 
-  constructor(config: ChainConfig = DEFAULT_CONFIG, blocks?: Block[]) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+  private constructor(config: ChainConfig) {
+    this.config = { ...DEFAULT_CONFIG, ...config, pow: config.pow ?? DEFAULT_CONFIG.pow };
+  }
+
+  static async open(config: ChainConfig = DEFAULT_CONFIG, blocks?: Block[]): Promise<Blockchain> {
+    const chain = new Blockchain(config);
     if (blocks && blocks.length > 0) {
-      this.chain = [];
-      this.hydrateFromSnapshot(blocks);
+      await chain.hydrateFromSnapshot(blocks);
     } else {
-      const genesis = createGenesisBlock(this.config);
-      this.chain = [];
-      this.applyValidBlock(genesis, { skipLinkChecks: true });
+      const genesis = await createGenesisBlock(chain.config);
+      await chain.applyValidBlock(genesis, { skipLinkChecks: true });
     }
+    return chain;
   }
 
   get height(): number {
@@ -52,8 +58,13 @@ export class Blockchain {
     return this.chain.length;
   }
 
+  get bits(): number {
+    return this.latestBlock.header.bits;
+  }
+
+  /** Work vs genesis target (1 at height 0). Exposed as `difficulty` on the REST status API. */
   get difficulty(): number {
-    return this.latestBlock.header.difficulty;
+    return workRatio(this.bits, this.config.initialBits);
   }
 
   get latestBlock(): Block {
@@ -72,51 +83,78 @@ export class Blockchain {
     return this.chain[height];
   }
 
+  getUtxo(txid: string, vout: number): Utxo | undefined {
+    return this.utxos.get(outpointKey(txid, vout));
+  }
+
+  getUtxos(address: string): Utxo[] {
+    return [...this.utxos.values()].filter((utxo) => utxo.address === address);
+  }
+
   getAccount(address: string): Account {
-    const snapshot = this.accounts.get(address) ?? emptyAccount();
-    return { address, balance: snapshot.balance, nonce: snapshot.nonce };
+    const balance = this.getUtxos(address).reduce((sum, utxo) => sum + utxo.amount, 0);
+    return { address, balance };
+  }
+
+  getTransaction(hash: string): Transaction | undefined {
+    for (const block of this.chain) {
+      const match = block.transactions.find((tx) => tx.hash === hash);
+      if (match) return match;
+    }
+    return undefined;
+  }
+
+  /** Live UTXO, or the output as it existed before being spent (for history). */
+  resolveOutpoint(txid: string, vout: number): Utxo | undefined {
+    const live = this.getUtxo(txid, vout);
+    if (live) return live;
+    const previous = this.getTransaction(txid);
+    const output = previous?.outputs[vout];
+    if (!output) return undefined;
+    return { txid, vout, address: output.address, amount: output.amount };
+  }
+
+  getSupplyStats(): { circulatingOrbs: number; holders: number } {
+    let circulatingOrbs = 0;
+    const holders = new Set<string>();
+    for (const utxo of this.utxos.values()) {
+      if (utxo.amount > 0) {
+        circulatingOrbs += utxo.amount;
+        holders.add(utxo.address);
+      }
+    }
+    return { circulatingOrbs, holders: holders.size };
   }
 
   hasTransaction(hash: string): boolean {
     return this.txHashes.has(hash);
   }
 
-  nextDifficulty(): number {
-    return computeNextDifficulty(this.chain, this.config);
+  nextBits(atTimestamp = Date.now()): number {
+    return computeNextBits(this.chain, this.config, atTimestamp);
   }
 
-  /**
-   * Validates and appends a block that extends the current tip.
-   */
-  addBlock(block: Block): void {
-    this.assertValidSuccessor(block, this.accounts, this.txHashes);
-    this.applyValidBlock(block);
+  async addBlock(block: Block): Promise<void> {
+    await this.assertValidSuccessor(block, this.utxos, this.txHashes);
+    this.commitBlock(block);
   }
 
-  /**
-   * Load a snapshot at process start. Unlike `replaceChain`, this does not
-   * require the incoming chain to be strictly longer than the current one.
-   */
-  hydrateFromSnapshot(blocks: Block[]): void {
-    this.assertValidChain(blocks);
-    const { accounts, txHashes } = this.replay(blocks);
+  async hydrateFromSnapshot(blocks: Block[]): Promise<void> {
+    await this.assertValidChain(blocks);
+    const { utxos, txHashes } = await this.replay(blocks);
     this.chain = blocks.map((block) => structuredClone(block));
-    this.accounts = accounts;
+    this.utxos = utxos;
     this.txHashes = txHashes;
   }
 
-  /**
-   * Longest valid chain rule. Incoming chain must share genesis and be fully valid.
-   */
-  replaceChain(newChain: Block[]): boolean {
+  async replaceChain(newChain: Block[]): Promise<boolean> {
     if (newChain.length <= this.chain.length) {
       return false;
     }
-    this.assertValidChain(newChain);
-
-    const { accounts, txHashes } = this.replay(newChain);
+    await this.assertValidChain(newChain);
+    const { utxos, txHashes } = await this.replay(newChain);
     this.chain = newChain.map((block) => structuredClone(block));
-    this.accounts = accounts;
+    this.utxos = utxos;
     this.txHashes = txHashes;
     return true;
   }
@@ -130,53 +168,57 @@ export class Blockchain {
     return i;
   }
 
-  private replay(blocks: Block[]): { accounts: AccountMap; txHashes: Set<string> } {
-    const accounts: AccountMap = new Map();
+  private async replay(blocks: Block[]): Promise<{ utxos: UtxoMap; txHashes: Set<string> }> {
+    const utxos: UtxoMap = new Map();
     const txHashes = new Set<string>();
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i]!;
-      this.assertValidBlockContents(block, accounts, txHashes, {
+      await this.assertValidBlockContents(block, utxos, txHashes, {
         skipLinkChecks: i === 0,
         previous: i === 0 ? undefined : blocks[i - 1],
-        expectedDifficulty:
+        expectedBits:
           i === 0
-            ? this.config.initialDifficulty
-            : computeNextDifficulty(blocks.slice(0, i), this.config),
+            ? this.config.initialBits
+            : computeNextBits(blocks.slice(0, i), this.config, block.header.timestamp),
       });
-      this.applyBlockToState(block, accounts, txHashes);
+      this.applyBlockToState(block, utxos, txHashes);
     }
-    return { accounts, txHashes };
+    return { utxos, txHashes };
   }
 
-  private assertValidChain(blocks: Block[]): void {
+  private async assertValidChain(blocks: Block[]): Promise<void> {
     if (blocks.length === 0) {
       throw new ValidationError('Chain cannot be empty');
     }
-    const genesis = createGenesisBlock(this.config);
+    const genesis = await createGenesisBlock(this.config);
     if (blocks[0]!.hash !== genesis.hash) {
       throw new ValidationError('Incoming chain has a different genesis block');
     }
-    this.replay(blocks);
+    await this.replay(blocks);
   }
 
-  private assertValidSuccessor(block: Block, accounts: AccountMap, txHashes: Set<string>): void {
-    this.assertValidBlockContents(block, accounts, txHashes, {
+  private async assertValidSuccessor(
+    block: Block,
+    utxos: UtxoMap,
+    txHashes: Set<string>,
+  ): Promise<void> {
+    await this.assertValidBlockContents(block, utxos, txHashes, {
       previous: this.latestBlock,
-      expectedDifficulty: this.nextDifficulty(),
+      expectedBits: computeNextBits(this.chain, this.config, block.header.timestamp),
     });
   }
 
-  private assertValidBlockContents(
+  private async assertValidBlockContents(
     block: Block,
-    accounts: AccountMap,
+    utxos: UtxoMap,
     txHashes: Set<string>,
     options: {
       skipLinkChecks?: boolean;
       previous?: Block;
-      expectedDifficulty?: number;
+      expectedBits?: number;
     },
-  ): void {
-    validateBlockStructure(block, this.config);
+  ): Promise<void> {
+    await validateBlockStructure(block, this.config);
 
     if (!options.skipLinkChecks) {
       const previous = options.previous;
@@ -203,25 +245,25 @@ export class Blockchain {
     }
 
     if (
-      options.expectedDifficulty !== undefined &&
-      block.header.difficulty !== options.expectedDifficulty &&
+      options.expectedBits !== undefined &&
+      block.header.bits !== options.expectedBits &&
       block.header.index !== 0
     ) {
       throw new ValidationError(
-        `Unexpected difficulty: expected ${options.expectedDifficulty}, got ${block.header.difficulty}`,
+        `Unexpected bits: expected ${options.expectedBits}, got ${block.header.bits}`,
       );
     }
 
-    const working = cloneAccounts(accounts);
+    const working = cloneUtxos(utxos);
     let fees = 0;
     for (let i = 1; i < block.transactions.length; i++) {
       const tx = block.transactions[i]!;
       if (txHashes.has(tx.hash)) {
         throw new ValidationError(`Duplicate transaction ${tx.hash}`);
       }
-      validateTransaction(tx, (address) => working.get(address) ?? emptyAccount());
+      validateTransaction(tx, (txid, vout) => working.get(outpointKey(txid, vout)));
+      fees += transactionFee(tx, (txid, vout) => working.get(outpointKey(txid, vout)));
       this.applyUserTransaction(tx, working);
-      fees += tx.fee;
     }
 
     const coinbase = block.transactions[0]!;
@@ -230,50 +272,58 @@ export class Blockchain {
       this.config.initialRewardOrbs,
       this.config.halvingInterval,
     );
-    if (coinbase.amount !== reward + fees) {
+    if (outputSum(coinbase) !== reward + fees) {
       throw new ValidationError(
-        `Invalid coinbase amount: expected ${reward + fees}, got ${coinbase.amount}`,
+        `Invalid coinbase amount: expected ${reward + fees}, got ${outputSum(coinbase)}`,
       );
     }
-    if (coinbase.nonce !== block.header.index) {
-      throw new ValidationError('Coinbase nonce must equal block index');
+    if (coinbase.inputs[0]!.vout !== block.header.index) {
+      throw new ValidationError('Coinbase input vout must equal block index');
     }
-    validateTransaction(coinbase, () => emptyAccount());
+    validateTransaction(coinbase, () => undefined);
   }
 
-  private applyUserTransaction(tx: Transaction, accounts: AccountMap): void {
-    const sender = { ...(accounts.get(tx.from) ?? emptyAccount()) };
-    sender.balance -= tx.amount + tx.fee;
-    sender.nonce = tx.nonce;
-    accounts.set(tx.from, sender);
-
-    const recipient = { ...(accounts.get(tx.to) ?? emptyAccount()) };
-    recipient.balance += tx.amount;
-    accounts.set(tx.to, recipient);
+  private applyUserTransaction(tx: Transaction, utxos: UtxoMap): void {
+    for (const input of tx.inputs) {
+      utxos.delete(outpointKey(input.txid, input.vout));
+    }
+    tx.outputs.forEach((output, vout) => {
+      utxos.set(outpointKey(tx.hash, vout), {
+        txid: tx.hash,
+        vout,
+        address: output.address,
+        amount: output.amount,
+      });
+    });
   }
 
-  private applyBlockToState(block: Block, accounts: AccountMap, txHashes: Set<string>): void {
+  private applyBlockToState(block: Block, utxos: UtxoMap, txHashes: Set<string>): void {
     for (let i = 1; i < block.transactions.length; i++) {
-      this.applyUserTransaction(block.transactions[i]!, accounts);
+      this.applyUserTransaction(block.transactions[i]!, utxos);
       txHashes.add(block.transactions[i]!.hash);
     }
     const coinbase = block.transactions[0]!;
-    const miner = { ...(accounts.get(coinbase.to) ?? emptyAccount()) };
-    miner.balance += coinbase.amount;
-    accounts.set(coinbase.to, miner);
+    this.applyUserTransaction(coinbase, utxos);
     txHashes.add(coinbase.hash);
   }
 
-  private applyValidBlock(block: Block, options: { skipLinkChecks?: boolean } = {}): void {
+  private async applyValidBlock(
+    block: Block,
+    options: { skipLinkChecks?: boolean } = {},
+  ): Promise<void> {
     if (!options.skipLinkChecks) {
-      this.assertValidSuccessor(block, this.accounts, this.txHashes);
+      await this.assertValidSuccessor(block, this.utxos, this.txHashes);
     } else {
-      this.assertValidBlockContents(block, this.accounts, this.txHashes, {
+      await this.assertValidBlockContents(block, this.utxos, this.txHashes, {
         skipLinkChecks: true,
-        expectedDifficulty: this.config.initialDifficulty,
+        expectedBits: this.config.initialBits,
       });
     }
-    this.applyBlockToState(block, this.accounts, this.txHashes);
+    this.commitBlock(block);
+  }
+
+  private commitBlock(block: Block): void {
+    this.applyBlockToState(block, this.utxos, this.txHashes);
     this.chain.push(structuredClone(block));
   }
 }

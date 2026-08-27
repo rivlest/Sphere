@@ -4,8 +4,10 @@ import { ValidationError } from '../core/errors.js';
 import type { SphereNode } from '../node.js';
 import { isValidAddress } from '../wallet/keys.js';
 import { formatOrbsToSph } from '../core/units.js';
-import { NETWORK_NAME, TICKER } from '../types.js';
-import { simulatedPrice } from './simulatedPrice.js';
+import { NETWORK_NAME, TICKER, type Transaction } from '../types.js';
+import { summarizeTransaction, transactionTouchesAddress, type Utxo } from '../core/transaction.js';
+import { buildMarketSnapshot } from './marketSnapshot.js';
+import { marketPrice } from './marketPrice.js';
 
 export function createRoutes(node: SphereNode): Router {
   const router = Router();
@@ -16,6 +18,7 @@ export function createRoutes(node: SphereNode): Router {
       name: NETWORK_NAME,
       symbol: TICKER,
       height: node.blockchain.height,
+      bits: node.blockchain.bits,
       difficulty: node.blockchain.difficulty,
       peers: node.p2p.peerCount,
       mining: node.isMining,
@@ -54,24 +57,37 @@ export function createRoutes(node: SphereNode): Router {
       res.status(400).json({ error: 'Invalid address' });
       return;
     }
-    const account = node.blockchain.getAccount(address);
-    const pending = node.mempool.getAll().filter((tx) => tx.from === address);
-    const lastPendingNonce = pending.sort((a, b) => a.nonce - b.nonce).at(-1)?.nonce;
+    const spendable = node.spendableUtxos(address);
+    const confirmed = node.blockchain.getAccount(address).balance;
+    const spendableBalance = spendable.reduce((sum, utxo) => sum + utxo.amount, 0);
     res.json({
       address,
-      balance: account.balance,
-      balanceSph: formatOrbsToSph(account.balance),
-      nonce: account.nonce,
-      nextNonce: (lastPendingNonce ?? account.nonce) + 1,
+      balance: spendableBalance,
+      confirmedBalance: confirmed,
+      balanceSph: formatOrbsToSph(spendableBalance),
+      utxos: spendable,
     });
+  });
+
+  router.get('/utxos/:address', (req, res) => {
+    const { address } = req.params;
+    if (!isValidAddress(address)) {
+      res.status(400).json({ error: 'Invalid address' });
+      return;
+    }
+    res.json({ address, utxos: node.spendableUtxos(address) });
   });
 
   router.get('/mempool', (_req, res) => {
     res.json({ transactions: node.mempool.getAll() });
   });
 
-  router.get('/price', (_req, res) => {
-    res.json(simulatedPrice.snapshot());
+  router.get('/price', async (_req, res) => {
+    res.json(await marketPrice.getQuote());
+  });
+
+  router.get('/market', async (_req, res) => {
+    res.json(await buildMarketSnapshot(node));
   });
 
   router.get('/transactions/:address', (req, res) => {
@@ -81,12 +97,13 @@ export function createRoutes(node: SphereNode): Router {
       return;
     }
     const limit = Math.min(parseInteger(req.query.limit, 50), 200);
+    const resolve = (txid: string, vout: number) => node.blockchain.resolveOutpoint(txid, vout);
     const confirmed = [];
     for (const block of node.blockchain.getBlocks()) {
       for (const tx of block.transactions) {
-        if (tx.from === address || tx.to === address) {
+        if (transactionTouchesAddress(tx, address, resolve)) {
           confirmed.push({
-            ...tx,
+            ...decorateTx(tx, resolve),
             status: 'confirmed' as const,
             blockHeight: block.header.index,
             blockHash: block.hash,
@@ -96,8 +113,8 @@ export function createRoutes(node: SphereNode): Router {
     }
     const pending = node.mempool
       .getAll()
-      .filter((tx) => tx.from === address || tx.to === address)
-      .map((tx) => ({ ...tx, status: 'pending' as const }));
+      .filter((tx) => transactionTouchesAddress(tx, address, resolve))
+      .map((tx) => ({ ...decorateTx(tx, resolve), status: 'pending' as const }));
     const transactions = [...pending, ...confirmed.reverse()].slice(0, limit);
     res.json({ address, transactions });
   });
@@ -145,6 +162,10 @@ export function createRoutes(node: SphereNode): Router {
 
 export function mountRoutes(app: Express, node: SphereNode): void {
   app.use(createRoutes(node));
+}
+
+function decorateTx(tx: Transaction, resolve: (txid: string, vout: number) => Utxo | undefined) {
+  return { ...tx, ...summarizeTransaction(tx, resolve) };
 }
 
 function parseInteger(value: unknown, fallback: number): number {

@@ -2,7 +2,7 @@ import * as secp from '@noble/secp256k1';
 import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
-import { ADDRESS_PREFIX, type Transaction, type UnsignedTransaction, type WalletSession } from '../types';
+import { ADDRESS_PREFIX, type Transaction, type UnsignedTransaction, type Utxo, type WalletSession } from '../types';
 
 secp.etc.hmacSha256Sync = (key, ...msgs) => hmac(sha256, key, secp.etc.concatBytes(...msgs));
 
@@ -77,12 +77,9 @@ export function walletFromPrivateKey(privateKeyHex: string): WalletSession {
 
 export function transactionPayload(tx: UnsignedTransaction): Record<string, unknown> {
   return {
-    amount: tx.amount,
-    fee: tx.fee,
-    from: tx.from,
-    nonce: tx.nonce,
+    inputs: tx.inputs.map((input) => ({ txid: input.txid, vout: input.vout })),
+    outputs: tx.outputs,
     timestamp: tx.timestamp,
-    to: tx.to,
   };
 }
 
@@ -106,25 +103,50 @@ export function signHash(messageHashHex: string, privateKeyHex: string): string 
 
 export function createSignedTransaction(
   params: {
-    from: string;
+    utxos: Utxo[];
     to: string;
     amount: number;
     fee: number;
-    nonce: number;
+    changeAddress: string;
     timestamp?: number;
   },
   privateKey: string,
 ): Transaction {
+  if (params.amount <= 0) {
+    throw new Error('Transaction amount must be greater than 0');
+  }
+  const selected = selectCoins(params.utxos, params.amount + params.fee);
+  const totalIn = selected.reduce((sum, utxo) => sum + utxo.amount, 0);
+  const change = totalIn - params.amount - params.fee;
+  const outputs = [{ address: params.to, amount: params.amount }];
+  if (change > 0) {
+    outputs.push({ address: params.changeAddress, amount: change });
+  }
   const unsigned: UnsignedTransaction = {
-    from: params.from,
-    to: params.to,
-    amount: params.amount,
-    fee: params.fee,
-    nonce: params.nonce,
+    inputs: selected.map((utxo) => ({ txid: utxo.txid, vout: utxo.vout, signature: '' })),
+    outputs,
     timestamp: params.timestamp ?? Date.now(),
-    signature: '',
   };
   const hash = hashTransaction(unsigned);
   const signature = signHash(hash, privateKey);
-  return { ...unsigned, hash, signature };
+  return {
+    ...unsigned,
+    inputs: unsigned.inputs.map((input) => ({ ...input, signature })),
+    hash,
+  };
+}
+
+function selectCoins(utxos: Utxo[], need: number): Utxo[] {
+  const sorted = [...utxos].sort((a, b) => b.amount - a.amount);
+  const selected: Utxo[] = [];
+  let total = 0;
+  for (const utxo of sorted) {
+    if (total >= need) break;
+    selected.push(utxo);
+    total += utxo.amount;
+  }
+  if (total < need) {
+    throw new Error('Insufficient UTXO balance');
+  }
+  return selected;
 }

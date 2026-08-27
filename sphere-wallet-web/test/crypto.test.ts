@@ -22,17 +22,24 @@ describe('transaction signing', () => {
     const alice = createWallet();
     const tx = createSignedTransaction(
       {
-        from: sender.address,
+        utxos: [
+          {
+            txid: 'ab'.repeat(32),
+            vout: 0,
+            address: sender.address,
+            amount: 5_000_000_000,
+          },
+        ],
         to: alice.address,
         amount: 1_000_000,
         fee: 1000,
-        nonce: 1,
+        changeAddress: sender.address,
         timestamp: 1_704_067_200_000,
       },
       sender.privateKey,
     );
     expect(tx.hash).toBe(hashTransaction(tx));
-    expect(tx.signature).toHaveLength(130);
-    expect(tx.from).toBe(sender.address);
+    expect(tx.inputs[0]!.signature).toHaveLength(130);
+    expect(tx.outputs[0]!.address).toBe(alice.address);
   });
 });

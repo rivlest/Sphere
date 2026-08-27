@@ -1,6 +1,12 @@
 import type { Transaction } from '../types.js';
 import { ValidationError } from '../core/errors.js';
-import { isCoinbaseTx, validateTransaction, type AccountSnapshot } from '../core/transaction.js';
+import {
+  isCoinbaseTx,
+  outpointKey,
+  transactionFee,
+  validateTransaction,
+  type Utxo,
+} from '../core/transaction.js';
 
 interface MempoolEntry {
   tx: Transaction;
@@ -26,9 +32,20 @@ export class Mempool {
     return [...this.entries.values()].map((entry) => entry.tx);
   }
 
+  reservedOutpoints(): Set<string> {
+    this.pruneExpired();
+    const reserved = new Set<string>();
+    for (const entry of this.entries.values()) {
+      for (const input of entry.tx.inputs) {
+        reserved.add(outpointKey(input.txid, input.vout));
+      }
+    }
+    return reserved;
+  }
+
   add(
     tx: Transaction,
-    getAccount: (address: string) => AccountSnapshot,
+    resolve: (txid: string, vout: number) => Utxo | undefined,
     alreadyInChain: (hash: string) => boolean,
   ): void {
     this.pruneExpired();
@@ -39,18 +56,15 @@ export class Mempool {
       throw new ValidationError('Duplicate transaction');
     }
 
-    const pendingBySender = this.pendingFor(tx.from);
-    validateTransaction(tx, (address) => {
-      if (address !== tx.from) return getAccount(address);
-      const confirmed = getAccount(tx.from);
-      const lastPending = pendingBySender[pendingBySender.length - 1];
-      if (!lastPending) return confirmed;
-      return {
-        balance: confirmed.balance - this.reservedBy(pendingBySender),
-        nonce: lastPending.nonce,
-      };
-    });
+    const reserved = this.reservedOutpoints();
+    for (const input of tx.inputs) {
+      const key = outpointKey(input.txid, input.vout);
+      if (reserved.has(key)) {
+        throw new ValidationError(`UTXO already spent in mempool: ${key}`);
+      }
+    }
 
+    validateTransaction(tx, resolve);
     this.entries.set(tx.hash, { tx, addedAt: Date.now() });
   }
 
@@ -65,56 +79,55 @@ export class Mempool {
   }
 
   /**
-   * Select up to `limit` transactions, highest fee first, while preserving
-   * per-sender nonce order.
+   * Select up to `limit` transactions, highest fee first.
+   * Two transactions that spend the same outpoint cannot both be selected.
    */
-  selectForBlock(limit: number, getAccount: (address: string) => AccountSnapshot): Transaction[] {
+  selectForBlock(
+    limit: number,
+    resolve: (txid: string, vout: number) => Utxo | undefined,
+  ): Transaction[] {
     this.pruneExpired();
     const remaining = [...this.entries.values()].map((entry) => entry.tx);
-    remaining.sort((a, b) => b.fee - a.fee || a.timestamp - b.timestamp);
+    remaining.sort((a, b) => {
+      const feeB = safeFee(b, resolve);
+      const feeA = safeFee(a, resolve);
+      return feeB - feeA || a.timestamp - b.timestamp;
+    });
 
     const included: Transaction[] = [];
-    const nextNonce = new Map<string, number>();
-    const spent = new Map<string, number>();
+    const spent = new Set<string>();
 
     for (const tx of remaining) {
       if (included.length >= limit) break;
-      const confirmed = getAccount(tx.from);
-      const expectedNonce = nextNonce.get(tx.from) ?? confirmed.nonce + 1;
-      if (tx.nonce !== expectedNonce) continue;
-      const alreadySpent = spent.get(tx.from) ?? 0;
-      if (confirmed.balance - alreadySpent < tx.amount + tx.fee) continue;
+      if (tx.inputs.some((input) => spent.has(outpointKey(input.txid, input.vout)))) {
+        continue;
+      }
+      try {
+        validateTransaction(tx, resolve);
+      } catch {
+        continue;
+      }
       included.push(tx);
-      nextNonce.set(tx.from, tx.nonce + 1);
-      spent.set(tx.from, alreadySpent + tx.amount + tx.fee);
+      for (const input of tx.inputs) {
+        spent.add(outpointKey(input.txid, input.vout));
+      }
     }
     return included;
   }
 
   requeueValid(
     txs: Transaction[],
-    getAccount: (address: string) => AccountSnapshot,
+    resolve: (txid: string, vout: number) => Utxo | undefined,
     alreadyInChain: (hash: string) => boolean,
   ): void {
     for (const tx of txs) {
       if (isCoinbaseTx(tx) || this.entries.has(tx.hash) || alreadyInChain(tx.hash)) continue;
       try {
-        this.add(tx, getAccount, alreadyInChain);
+        this.add(tx, resolve, alreadyInChain);
       } catch {
         // Drop transactions that are no longer valid against the new tip.
       }
     }
-  }
-
-  private pendingFor(address: string): Transaction[] {
-    return [...this.entries.values()]
-      .map((entry) => entry.tx)
-      .filter((tx) => tx.from === address)
-      .sort((a, b) => a.nonce - b.nonce);
-  }
-
-  private reservedBy(pending: Transaction[]): number {
-    return pending.reduce((sum, tx) => sum + tx.amount + tx.fee, 0);
   }
 
   private pruneExpired(): void {
@@ -124,5 +137,13 @@ export class Mempool {
         this.entries.delete(hash);
       }
     }
+  }
+}
+
+function safeFee(tx: Transaction, resolve: (txid: string, vout: number) => Utxo | undefined): number {
+  try {
+    return transactionFee(tx, resolve);
+  } catch {
+    return 0;
   }
 }

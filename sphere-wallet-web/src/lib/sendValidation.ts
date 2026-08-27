@@ -71,7 +71,9 @@ export const SEND_ERROR_COPY: Record<SendFieldError, string> = {
 export function mapNodeError(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes('insufficient')) return 'Niewystarczające środki';
-  if (lower.includes('nonce')) return 'Nieprawidłowy nonce — odśwież saldo i spróbuj ponownie';
+  if (lower.includes('utxo') || lower.includes('already spent')) {
+    return 'Ten UTXO jest już wydany — odśwież saldo i spróbuj ponownie';
+  }
   if (lower.includes('signature')) return 'Nieprawidłowy podpis transakcji';
   if (lower.includes('invalid recipient') || lower.includes('invalid sender')) {
     return 'Nieprawidłowy adres w transakcji';

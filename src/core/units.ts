@@ -36,3 +36,14 @@ export function blockRewardOrbs(
   if (halvings >= 53) return 0;
   return Math.floor(initialRewardOrbs / 2 ** halvings);
 }
+
+/** Theoretical lifetime issuance (Bitcoin-style halvings). */
+export function maxSupplyOrbs(initialRewardOrbs: number, halvingInterval: number): number {
+  let total = 0;
+  for (let era = 0; era < 64; era += 1) {
+    const reward = Math.floor(initialRewardOrbs / 2 ** era);
+    if (reward <= 0) break;
+    total += reward * halvingInterval;
+  }
+  return total;
+}

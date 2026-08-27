@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createSignedTransaction } from '../lib/crypto';
-import type { Transaction, WalletSession } from '../types';
+import type { Transaction, Utxo, WalletSession } from '../types';
 
 interface WalletContextValue {
   wallet: WalletSession | null;
@@ -17,7 +17,7 @@ interface WalletContextValue {
     to: string;
     amount: number;
     fee: number;
-    nonce: number;
+    utxos: Utxo[];
     timestamp?: number;
   }) => Transaction;
 }
@@ -46,13 +46,16 @@ export function WalletProvider({
       to: string;
       amount: number;
       fee: number;
-      nonce: number;
+      utxos: Utxo[];
       timestamp?: number;
     }): Transaction => {
       if (!wallet) {
         throw new Error('Wallet is locked');
       }
-      return createSignedTransaction({ ...params, from: wallet.address }, wallet.privateKey);
+      return createSignedTransaction(
+        { ...params, changeAddress: wallet.address },
+        wallet.privateKey,
+      );
     },
     [wallet],
   );

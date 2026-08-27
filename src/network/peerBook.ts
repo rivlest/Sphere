@@ -1,12 +1,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { normalizePeerUrl } from './p2p.js';
+import { isPeerAddress, normalizePeerAddress } from './multiaddr.js';
 
 const MAX_FAILURES = 5;
 
-export function isPeerUrl(url: string): boolean {
-  return /^wss?:\/\/[^/\s]+/i.test(url.trim()) && url.length < 256;
-}
+export { isPeerAddress, isPeerAddress as isPeerUrl } from './multiaddr.js';
 
 export class PeerBook {
   private urls = new Set<string>();
@@ -23,8 +21,8 @@ export class PeerBook {
   }
 
   add(url: string): boolean {
-    if (!isPeerUrl(url)) return false;
-    const normalized = normalizePeerUrl(url);
+    if (!isPeerAddress(url)) return false;
+    const normalized = normalizePeerAddress(url);
     if (this.urls.has(normalized)) return false;
     this.urls.add(normalized);
     this.failures.delete(normalized);
@@ -32,11 +30,11 @@ export class PeerBook {
   }
 
   markSuccess(url: string): void {
-    this.failures.delete(normalizePeerUrl(url));
+    this.failures.delete(normalizePeerAddress(url));
   }
 
   markFailure(url: string): void {
-    const normalized = normalizePeerUrl(url);
+    const normalized = normalizePeerAddress(url);
     const count = (this.failures.get(normalized) ?? 0) + 1;
     this.failures.set(normalized, count);
     if (count >= MAX_FAILURES) {

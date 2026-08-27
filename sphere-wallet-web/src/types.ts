@@ -8,19 +8,36 @@ export const COINBASE_SENDER = 'COINBASE';
 export const DEFAULT_FEE_SPH = '0.0001';
 export const KEYSTORE_PBKDF2_ITERATIONS = 210_000;
 
-export interface Transaction {
-  from: string;
-  to: string;
-  amount: number;
-  fee: number;
-  nonce: number;
-  timestamp: number;
+export interface TxInput {
+  txid: string;
+  vout: number;
   signature: string;
-  hash: string;
 }
 
-export type UnsignedTransaction = Omit<Transaction, 'hash' | 'signature'> & {
-  signature?: string;
+export interface TxOutput {
+  address: string;
+  amount: number;
+}
+
+export interface Utxo {
+  txid: string;
+  vout: number;
+  address: string;
+  amount: number;
+}
+
+export interface Transaction {
+  inputs: TxInput[];
+  outputs: TxOutput[];
+  timestamp: number;
+  hash: string;
+  from?: string;
+  to?: string;
+  amount?: number;
+  fee?: number;
+}
+
+export type UnsignedTransaction = Pick<Transaction, 'inputs' | 'outputs' | 'timestamp'> & {
   hash?: string;
 };
 
@@ -40,9 +57,9 @@ export interface KeystoreFile {
 export interface BalanceResponse {
   address: string;
   balance: number;
+  confirmedBalance?: number;
   balanceSph: string;
-  nonce: number;
-  nextNonce: number;
+  utxos: Utxo[];
 }
 
 export interface PricePoint {
@@ -50,16 +67,46 @@ export interface PricePoint {
   price: number;
 }
 
-export interface PriceResponse {
-  demo: true;
-  source: 'simulated' | string;
-  label: string;
+export interface MarketSnapshot {
+  name: string;
+  symbol: string;
+  listed: boolean;
+  source: 'coinmarketcap' | 'onchain' | 'hybrid';
+  cmcUrl: string | null;
+  available: boolean;
   currency: string;
-  price: number;
-  change1hPercent: number;
-  updatedAt: number;
-  intervalMs: number;
+  price: number | null;
+  change1hPercent: number | null;
+  change24hPercent: number | null;
+  change7dPercent: number | null;
+  marketCap: number | null;
+  fullyDilutedMarketCap: number | null;
+  volume24h: number | null;
+  rank: number | null;
+  marketPairs: number | null;
+  circulatingSupply: number;
+  circulatingSupplyLabel: string;
+  totalSupply: number;
+  maxSupply: number;
+  maxSupplyLabel: string;
+  holders: number;
+  height: number;
   history: PricePoint[];
+  updatedAt: number;
+  pollIntervalMs: number;
+  error?: string;
+}
+
+export interface PriceResponse {
+  available: boolean;
+  source: string | null;
+  currency: string;
+  price: number | null;
+  change1hPercent: number | null;
+  updatedAt: number | null;
+  pollIntervalMs: number;
+  history: PricePoint[];
+  error?: string;
 }
 
 export interface AddressTransaction extends Transaction {
@@ -73,6 +120,7 @@ export interface NodeStatus {
   symbol: string;
   height: number;
   difficulty: number;
+  bits?: number;
   peers: number;
   mining: boolean;
   mempool: number;

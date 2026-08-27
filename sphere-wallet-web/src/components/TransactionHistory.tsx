@@ -30,12 +30,19 @@ export function TransactionHistory({ address }: { address: string }) {
       )}
       <ul className="divide-y divide-white/5">
         {items.map((tx) => {
-          const incoming = tx.to === address && tx.from !== address;
+          const incoming = (tx.to === address && tx.from !== address) ||
+            (tx.outputs?.some((output) => output.address === address) &&
+              tx.from !== address);
           const counterparty = incoming
             ? tx.from === COINBASE_SENDER
               ? 'coinbase'
-              : tx.from
-            : tx.to;
+              : tx.from ?? 'unknown'
+            : tx.to ?? tx.outputs?.find((output) => output.address !== address)?.address ?? 'unknown';
+          const amount = tx.amount ??
+            tx.outputs
+              ?.filter((output) => output.address === address)
+              .reduce((sum, output) => sum + output.amount, 0) ??
+            0;
           return (
             <li key={tx.hash} className="flex items-center justify-between gap-3 py-3 text-sm">
               <div className="min-w-0 text-left">
@@ -49,7 +56,7 @@ export function TransactionHistory({ address }: { address: string }) {
               </div>
               <p className={incoming ? 'font-medium text-orb' : 'font-medium'}>
                 {incoming ? '+' : '−'}
-                {formatOrbsToSph(tx.amount)} SPH
+                {formatOrbsToSph(amount)} SPH
               </p>
             </li>
           );
