@@ -5,6 +5,8 @@ import { createWallet, walletFromPrivateKey, type Wallet } from '../wallet/walle
 import { isValidAddress } from '../wallet/keys.js';
 import { createSignedTransaction } from '../core/transaction.js';
 import { parseSphToOrbs, formatOrbsToSph } from '../core/units.js';
+import { LOCAL_REST } from '../network/seeds.js';
+import { resolveRestUrl, restUrlWasExplicit } from '../wallet/rest.js';
 
 const program = new Command();
 program.name('wallet-cli').description('Sphere wallet utilities');
@@ -25,16 +27,18 @@ program
 
 program
   .command('balance')
-  .description('Fetch confirmed balance from a local node')
+  .description('Fetch confirmed balance from a node')
   .option('--wallet <file>', 'wallet JSON (used if --address is omitted)')
   .option('--address <address>', 'Sphere address')
-  .option('--node <url>', 'node REST base URL', 'http://127.0.0.1:3001')
+  .option('--node <url>', 'node REST base URL', LOCAL_REST)
   .action(async (cmd: { wallet?: string; address?: string; node: string }) => {
     const address = cmd.address ?? (await loadWallet(required(cmd.wallet, '--wallet'))).address;
     if (!isValidAddress(address)) {
       throw new Error('Invalid address');
     }
-    const body = await requestJson(`${trimSlash(cmd.node)}/balance/${address}`);
+    const base = await resolveRestUrl(cmd.node, restUrlWasExplicit());
+    const body = await requestJson(`${base}/balance/${address}`);
+    console.log(`Node:       ${base}`);
     console.log(`Address:    ${body.address}`);
     console.log(`Balance:    ${body.balanceSph} SPH (${body.balance} Orbs)`);
     const utxos = Array.isArray(body.utxos) ? body.utxos.length : 0;
@@ -48,7 +52,7 @@ program
   .requiredOption('--to <address>', 'recipient address')
   .requiredOption('--amount <sph>', 'amount in SPH (decimal string, not float math)')
   .option('--fee <sph>', 'fee in SPH', '0.0001')
-  .option('--node <url>', 'node REST base URL', 'http://127.0.0.1:3001')
+  .option('--node <url>', 'node REST base URL', LOCAL_REST)
   .action(
     async (cmd: { wallet: string; to: string; amount: string; fee: string; node: string }) => {
       const wallet = await loadWallet(cmd.wallet);
@@ -57,7 +61,7 @@ program
       }
       const amount = parseSphToOrbs(cmd.amount);
       const fee = parseSphToOrbs(cmd.fee);
-      const base = trimSlash(cmd.node);
+      const base = await resolveRestUrl(cmd.node, restUrlWasExplicit());
       const account = await requestJson(`${base}/balance/${wallet.address}`);
       const utxos = (account.utxos ?? []) as Array<{
         txid: string;
@@ -80,6 +84,7 @@ program
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(tx),
       });
+      console.log(`Node:        ${base}`);
       console.log(`Broadcasted ${formatOrbsToSph(amount)} SPH`);
       console.log(`Hash: ${result.hash ?? tx.hash}`);
     },
@@ -95,10 +100,6 @@ function required(value: string | undefined, flag: string): string {
   return value;
 }
 
-function trimSlash(url: string): string {
-  return url.replace(/\/$/, '');
-}
-
 async function loadWallet(file: string): Promise<Wallet> {
   const raw = JSON.parse(await readFile(file, 'utf8')) as Partial<Wallet>;
   if (!raw.privateKey) throw new Error('Wallet file is missing privateKey');
@@ -106,7 +107,12 @@ async function loadWallet(file: string): Promise<Wallet> {
 }
 
 async function requestJson(url: string, init?: RequestInit): Promise<Record<string, unknown>> {
-  const response = await fetch(url, init);
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch {
+    throw new Error(`Cannot reach ${url}`);
+  }
   const body = (await response.json()) as Record<string, unknown>;
   if (!response.ok) {
     throw new Error(String(body.error ?? `HTTP ${response.status}`));

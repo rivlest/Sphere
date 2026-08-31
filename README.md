@@ -49,19 +49,19 @@ curl http://57.128.203.234:3001/status
 - A CPU and about **4 MB RAM per mining attempt** (any normal PC from the last decade)
 - Outbound internet (to find other nodes). Open ports only if others should connect **in**.
 
-Windows, macOS, and Linux all work. The wallet talks to your local node’s REST API (`http://127.0.0.1:3001`).
+Windows, macOS, and Linux all work. The wallet CLI tries `http://127.0.0.1:3001` first, then the public seed if nothing is listening locally.
 
 ---
 
 ## Quick start
 
-Do **1 → 2 → 3** once. After that pick **only what you need** from the table.
+Do **1 → 2 → 3 → 4** once (install, clone, wallet, node). Then pick from the table.
 
 | I want to… | What to run |
 | --- | --- |
-| See my balance / open the web wallet | Wallet CLI or web wallet against `http://127.0.0.1:3001` |
-| Send SPH | Same as balance |
-| Earn 50 SPH block rewards | `npm run start -- --mine --miner-address sph1…` |
+| See my balance / open the web wallet | Step 4, then step 5 (or the web wallet) |
+| Send SPH | Step 4, then step 6 |
+| Earn 50 SPH block rewards | Step 4 with `--mine --miner-address sph1…` |
 
 `0 SPH` is normal until you win a block or someone sends you coins.
 
@@ -122,9 +122,35 @@ Copy the `sph1…` **address**.
 
 The file `wallets/moj.json` is your **private key**. Back it up offline. Do not put it in git, Discord, email, or a screenshot. `wallets/` is gitignored on purpose.
 
-### 4. See your balance
+### 4. Start a node
 
-Start a node (step 5) if it is not already running. Then, from the `Sphere` folder:
+Leave this window open. REST is `http://127.0.0.1:3001`. Do not run two `npm run start` on the same ports.
+
+Sync only:
+
+```bash
+npm run start -- --port 3001 --p2p-port 6001
+```
+
+Mine (rewards go to this address when **this** computer finds a block; ~10 min target, no open ports required):
+
+```bash
+npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1PASTE_YOUR_ADDRESS
+```
+
+Wait ~10 seconds, then in a **second** terminal:
+
+```bash
+curl http://127.0.0.1:3001/status
+```
+
+You should see `"name": "Sphere"`. With `--mine`, `"mining"` is `true` and `"height"` rises when this node or a peer finds a block.
+
+To add mining later, stop the node (Ctrl+C) and start again with `--mine`. Same Wi-Fi: other Sphere nodes appear via mDNS. Across the internet: `--peers ws://THEIR.IP:6001` or a reachable `--p2p-url`. After the first successful connect, URLs are stored in `data/peers.json`.
+
+### 5. See your balance
+
+Second terminal, from the `Sphere` folder. If nothing is listening on localhost, the CLI uses the public seed (`http://57.128.203.234:3001`) so this still works without a local node.
 
 Windows PowerShell:
 
@@ -146,47 +172,9 @@ Only an address, no JSON file:
 npm run wallet -- balance --address sph1YOUR_ADDRESS
 ```
 
-`--node` defaults to `http://127.0.0.1:3001`.
+Force a specific node with `--node http://HOST:3001`. The printed `Node:` line shows which REST URL answered.
 
-### 5. Local node
-
-Sync and REST on `http://127.0.0.1:3001`. Leave this window open.
-
-```bash
-npm run start -- --port 3001 --p2p-port 6001
-```
-
-Then in a **second** terminal, from the `Sphere` folder:
-
-```bash
-npm run wallet -- balance --wallet wallets/moj.json
-curl http://127.0.0.1:3001/status
-```
-
-Same Wi-Fi: other Sphere nodes appear via mDNS. Across the internet: `--peers ws://THEIR.IP:6001` or a reachable `--p2p-url`. After the first successful connect, URLs are stored in `data/peers.json`.
-
-### 6. Mine
-
-```bash
-npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1PASTE_YOUR_ADDRESS
-```
-
-Leave this window open. Mining runs on **this** computer.
-
-Wait ~10 seconds, then in a **second** terminal:
-
-```bash
-curl http://127.0.0.1:3001/status
-```
-
-- `mining` is `true`
-- `height` increases when this node (or a peer) finds a block
-
-Rewards (50 SPH) go to `--miner-address` when your node finds a block. Target spacing is 10 minutes. You do not need to open ports to mine.
-
-Do not run two `npm run start` on the same ports. To add mining, stop the node (Ctrl+C) and start again with `--mine`.
-
-### 7. Send coins
+### 6. Send coins
 
 ```bash
 npm run wallet -- send --wallet wallets/moj.json --to sph1RECIPIENT --amount 1 --fee 0.0001
@@ -257,13 +245,13 @@ Add that `ws://…` URL to [`bootstrap-peers.json`](bootstrap-peers.json) if you
 
 `--no-default-seeds` plus no `--peers` starts a **private fork**, not the public chain.
 
-Update the current seed **without wiping the chain** (no mining; relay for miners):
+The public seed (`57.128.203.234`) must **not** mine (OVH forbids PoW on a VPS). Miners run `--mine` on home PCs. Update that VPS **without wiping the chain**:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rivlest/Sphere/master/scripts/update-public-seed.sh | bash
 ```
 
-Do **not** run `reset-public-seed.sh` unless you intend to delete the live chain.
+Do **not** run `reset-public-seed.sh` on the live seed. It deletes `~/sphere-data` (everyone’s height/balances on that node go back to genesis). The script now exits unless `SPHERE_WIPE_LIVE_CHAIN=YES_DELETE_THE_LIVE_CHAIN` is set.
 
 ### Two nodes on one computer
 
@@ -287,7 +275,7 @@ Longest valid chain wins; the replacement is fully validated first.
 | `--peers` | Extra bootstrap peers, comma-separated `ws://host:port` |
 | `--no-default-seeds` | Private node: skip GitHub peer list and public DHT |
 | `--p2p-url` | Public `ws://host:port` advertised to others |
-| `--mine` | Mine in a loop |
+| `--mine` | Mine in a loop (home PCs only; seed sets `SPHERE_DISABLE_MINING=1`) |
 | `--miner-address` | Coinbase recipient (`sph1…`) — required with `--mine` |
 | `--data-dir` | Chain directory (`chain.dat` + `chain.idx`, default `data`) |
 
@@ -353,7 +341,7 @@ CORS is enabled so the browser wallet can call a local node.
 | `meshReady`: false | Not enough miner-to-miner links yet. Leave the VPS on. |
 | `height` never matches a friend | Different data dirs / old `data/` — stop, delete that dir, start again. Or you used `--no-default-seeds` |
 | Balance is 0 | No coins yet. Mine with the same `sph1` as `--miner-address`, or get a transfer |
-| `curl` / wallet cannot reach `:3001` | Start `npm run start` in another terminal, or pass `--node` to a running node |
+| `curl` / wallet cannot reach `:3001` | Start `npm run start` (step 4) in another terminal, or pass `--node http://HOST:3001` |
 | Second local node will not start | Port clash: first node uses 6001 **and** 6002. Use `--p2p-port 6101` for the second |
 
 Tests: `npm test` from the repo root.

@@ -59,6 +59,7 @@ ExecStart=$NPM_BIN run start -- --port 3001 --p2p-port 6001 --data-dir $DATA_DIR
 Restart=always
 RestartSec=4
 Environment=NODE_ENV=production
+Environment=SPHERE_DISABLE_MINING=1
 Environment=PATH=$(dirname "$NODE_BIN"):/usr/bin:/bin
 
 [Install]

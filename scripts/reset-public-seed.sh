@@ -12,6 +12,22 @@ APP_DIR="${APP_DIR:-$HOME/Sphere}"
 DATA_DIR="${DATA_DIR:-$HOME/sphere-data}"
 WALLET="${WALLET:-$APP_DIR/wallets/seed.json}"
 
+if [[ "${SPHERE_WIPE_LIVE_CHAIN:-}" != "YES_DELETE_THE_LIVE_CHAIN" ]]; then
+  cat >&2 <<'EOF'
+[sphere] Refusing to wipe chain data.
+
+This script deletes ~/sphere-data and starts from genesis on THIS machine.
+On the public seed that orphans every miner's SPH.
+
+To update the VPS without wiping (no mining):
+  curl -fsSL https://raw.githubusercontent.com/rivlest/Sphere/master/scripts/update-public-seed.sh | bash
+
+If you really intend a genesis reset:
+  SPHERE_WIPE_LIVE_CHAIN=YES_DELETE_THE_LIVE_CHAIN bash scripts/reset-public-seed.sh
+EOF
+  exit 1
+fi
+
 echo "[sphere] stopping old node…"
 pkill -f "src/cli/node.ts" 2>/dev/null || true
 pkill -f "tsx src/cli/node.ts" 2>/dev/null || true
@@ -68,6 +84,7 @@ ExecStart=$NPM_BIN run start -- --port 3001 --p2p-port 6001 --data-dir $DATA_DIR
 Restart=always
 RestartSec=4
 Environment=NODE_ENV=production
+Environment=SPHERE_DISABLE_MINING=1
 Environment=PATH=$(dirname "$NODE_BIN"):/usr/bin:/bin
 
 [Install]

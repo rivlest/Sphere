@@ -33,6 +33,13 @@ const peers = opts.peers
   .map((url) => url.trim())
   .filter(Boolean);
 
+if (process.env.SPHERE_DISABLE_MINING === '1' && opts.mine) {
+  console.error(
+    'Error: SPHERE_DISABLE_MINING=1 (seed/VPS). Mine on a home PC, not this host.',
+  );
+  process.exit(1);
+}
+
 if (opts.mine && (!opts.minerAddress || !isValidAddress(opts.minerAddress))) {
   console.error('Error: --mine requires a valid --miner-address (sph1…)');
   process.exit(1);
