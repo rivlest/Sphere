@@ -244,13 +244,11 @@ Add that `ws://…` URL to [`bootstrap-peers.json`](bootstrap-peers.json) if you
 
 `--no-default-seeds` plus no `--peers` starts a **private fork**, not the public chain.
 
-The public seed (`57.128.203.234`) must **not** mine (OVH forbids PoW on a VPS). Miners run `--mine` on home PCs. Update that VPS **without wiping the chain**:
+The public seed (`57.128.203.234`) must **not** mine (OVH forbids PoW on a VPS). Miners run `--mine` on home PCs. Update that VPS without touching `~/sphere-data`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rivlest/Sphere/master/scripts/update-public-seed.sh | bash
 ```
-
-Do **not** run `reset-public-seed.sh` on the live seed. It deletes `~/sphere-data` (everyone’s height/balances on that node go back to genesis). The script now exits unless `SPHERE_WIPE_LIVE_CHAIN=YES_DELETE_THE_LIVE_CHAIN` is set.
 
 ### Two nodes on one computer
 
