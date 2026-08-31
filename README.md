@@ -29,12 +29,12 @@ curl http://127.0.0.1:3001/status
 
 You should see JSON with `"name": "Sphere"`, a `height`, `bits`, and `latestHash`. Rising `height` means blocks are being found.
 
-The public seed `ws://57.128.203.234:6001` is the bootstrap **until** miners form a mesh. Check `"meshReady"`:
+The public seed `ws://57.128.203.234:6001` is the bootstrap **and circuit relay** so miners behind NAT form a mesh. Check `"meshReady"`:
 
 - On the seed: `true` when at least 3 miners are connected
 - On your miner: `true` when you reach at least 2 other Sphere nodes besides the seed
 
-Keep the VPS on until miners show `"meshReady": true`. Then the same chain continues without it.
+Home miners do **not** need `--p2p-url` or an open port. They reserve a relay slot on the seed, gossip `/p2p-circuit` addresses (never `192.168…`), then hole-punch with DCUtR for direct miner-to-miner links. Same Wi-Fi still uses mDNS. Keep the VPS on until miners show `"meshReady": true`. Then the same chain continues without it.
 
 ```bash
 curl http://57.128.203.234:3001/status
@@ -321,7 +321,7 @@ CORS is enabled so the browser wallet can call a local node.
 - Retarget every **144** blocks: `new_target = old × actual / expected`, clamped to ×1.4 / ÷1.4
 - Stall valve: gap **>10×** target spacing (100 min) eases ×1.4 per such window, capped at genesis
 - Mempool: highest fee first, max 500 transactions per block, 1 hour TTL
-- P2P: libp2p (WebSocket + TCP, Sphere DHT, mDNS, optional public DHT + circuit relay). Chain sync is batched (32 blocks per message); full block bodies live on disk (`chain.dat`), not as one 50 MB dump.
+- P2P: libp2p (WebSocket + TCP, Sphere DHT, mDNS, public DHT, circuit relay + DCUtR). NAT miners mesh through the seed relay; RFC1918 addresses are not gossiped. Chain sync is batched (32 blocks per message); full block bodies live on disk (`chain.dat`), not as one 50 MB dump.
 
 ---
 
@@ -335,7 +335,8 @@ CORS is enabled so the browser wallet can call a local node.
 | `npm install` fails on `argon2` | 64-bit OS? Node 20+? Then install C build tools (Windows: “Desktop development with C++”) and retry |
 | `curl` to `:3001` fails | Wait 10s after start; check the node window for errors; is another app using 3001? |
 | `peers`: 0 | Wait; default seed is `ws://57.128.203.234:6001`. Same LAN uses mDNS. After one connect, see `data/peers.json` |
-| `meshReady`: false | Not enough miner-to-miner links yet. Leave the VPS on. |
+| `Could not connect` / `192.168…` | Old node gossiped LAN IPs. `git pull` + restart miners **and** the VPS (`update-public-seed.sh`). |
+| `meshReady`: false | Not enough miner-to-miner links yet. Leave the VPS on; NAT peers connect via circuit relay first. |
 | `height` never matches a friend | Different data dirs / old `data/` — stop, delete that dir, start again. Or you used `--no-default-seeds` |
 | Balance is 0 | No coins yet. Mine with the same `sph1` as `--miner-address`, or get a transfer |
 | `curl` / wallet cannot reach `:3001` | Start `npm run start` (step 4) in another terminal, or pass `--node http://HOST:3001` |

@@ -19,7 +19,7 @@ import type { Connection, PeerId, PrivateKey, Stream } from '@libp2p/interface';
 import type { P2PMessage } from '../types.js';
 import { decodeMessage, encodeMessage } from './messages.js';
 import { sphereDiscoveryCid } from './discovery.js';
-import { isGossipablePeerAddress } from './gossip.js';
+import { denyOutboundDial, isGossipablePeerAddress } from './gossip.js';
 import {
   listenMultiaddrs,
   normalizePeerAddress,
@@ -99,7 +99,7 @@ export class P2PNetwork extends EventEmitter {
 
     for (const addr of this.node.getMultiaddrs()) {
       const rewritten = rewriteUnspecified(addr.toString(), this.advertisedUrl);
-      if (rewritten && isGossipablePeerAddress(rewritten) && !rewritten.includes('p2p-circuit')) {
+      if (rewritten && isGossipablePeerAddress(rewritten)) {
         out.add(rewritten);
       }
     }
@@ -152,13 +152,22 @@ export class P2PNetwork extends EventEmitter {
       : undefined;
 
     const useRelay = this.internetDiscovery || this.offerRelay;
+    // NAT miners listen on /p2p-circuit so they take a HOP reservation on the seed.
+    // The seed is the relay server — it must not listen as a client.
+    const listenCircuit = this.internetDiscovery && !this.offerRelay;
 
     this.node = await createLibp2p({
       start: false,
       privateKey,
       addresses: {
-        listen: listenMultiaddrs(port),
+        listen: [...listenMultiaddrs(port), ...(listenCircuit ? ['/p2p-circuit'] : [])],
         announce,
+        ...(this.internetDiscovery
+          ? {
+              announceFilter: (addrs) =>
+                addrs.filter((ma) => isGossipablePeerAddress(ma.toString())),
+            }
+          : {}),
       },
       transports: [
         webSockets(),
@@ -167,6 +176,9 @@ export class P2PNetwork extends EventEmitter {
       ],
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
+      connectionGater: {
+        denyDialMultiaddr: (ma) => denyOutboundDial(ma.toString()),
+      },
       peerDiscovery: [
         ...(bootstrapList.length > 0 ? [bootstrap({ list: bootstrapList, timeout: 1_000 })] : []),
         ...(this.lanDiscovery ? [mdns({ serviceTag: '_sphere._udp.local' })] : []),
@@ -182,6 +194,7 @@ export class P2PNetwork extends EventEmitter {
           protocol: SPHERE_DHT_PROTOCOL,
           clientMode: false,
           allowQueryWithZeroPeers: true,
+          ...(this.internetDiscovery ? { peerInfoMapper: removePrivateAddressesMapper } : {}),
           logPrefix: 'libp2p:dht-sphere',
           datastorePrefix: '/dht-sphere',
           metricsPrefix: 'libp2p_dht_sphere',
@@ -225,22 +238,24 @@ export class P2PNetwork extends EventEmitter {
       const info = event.detail;
       if (info.id.toString() === this.node?.peerId.toString()) return;
       if ((this.node?.getConnections(info.id).length ?? 0) > 0) return;
-      void this.node?.dial(info.multiaddrs).catch((error: unknown) => {
+      const addrs = info.multiaddrs.filter((ma) => !denyOutboundDial(ma.toString()));
+      if (addrs.length === 0) return;
+      void this.node?.dial(addrs).catch((error: unknown) => {
         this.log('dial failed', `${info.id.toString()} ${(error as Error).message}`);
       });
     });
 
     await this.node.start();
     const addrs = this.node.getMultiaddrs().map((addr) => addr.toString());
-    const listenPort = wsListenPort(addrs);
-    this.log('listening', addrs.join(' '));
+    const listenPort = port !== 0 ? port : wsListenPort(addrs);
+    this.log('listening', addrs.join(' ') || `port ${listenPort}`);
     return listenPort;
   }
 
   async connect(addr: string): Promise<void> {
     if (!this.node) throw new Error('P2P is not listening');
     const ma = toMultiaddrString(addr);
-    if (this.isSelf(ma)) return;
+    if (this.isOwnAddress(ma)) return;
     const stream = await this.node.dialProtocol(multiaddr(ma), SPHERE_SYNC_PROTOCOL);
     const conn = this.node
       .getConnections()
@@ -279,7 +294,9 @@ export class P2PNetwork extends EventEmitter {
     }
   }
 
-  private isSelf(addr: string): boolean {
+  private isOwnAddress(addr: string): boolean {
+    const dest = /\/p2p\/([^/]+)$/i.exec(addr)?.[1];
+    if (dest && this.node && dest === this.node.peerId.toString()) return true;
     const target = stripPeerId(normalizePeerAddress(addr));
     const self = [
       this.advertisedUrl ? toMultiaddrString(this.advertisedUrl) : '',

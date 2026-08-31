@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isPrivateLanAddress } from './gossip.js';
 import { isPeerAddress, normalizePeerAddress } from './multiaddr.js';
 
 const MAX_FAILURES = 5;
@@ -21,7 +22,7 @@ export class PeerBook {
   }
 
   add(url: string): boolean {
-    if (!isPeerAddress(url)) return false;
+    if (!isPeerAddress(url) || isPrivateLanAddress(url)) return false;
     const normalized = normalizePeerAddress(url);
     if (this.urls.has(normalized)) return false;
     this.urls.add(normalized);

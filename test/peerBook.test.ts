@@ -1,3 +1,5 @@
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { PeerBook, isPeerUrl } from '../src/network/peerBook.js';
 import { withTempDir } from './helpers.js';
@@ -27,5 +29,18 @@ describe('peer book', () => {
   it('rejects non-websocket URLs', () => {
     expect(isPeerUrl('http://example.com')).toBe(false);
     expect(isPeerUrl('wss://seed.example:6001')).toBe(true);
+  });
+
+  it('does not persist RFC1918 addresses from an old peers.json', async () => {
+    await withTempDir(async (dir) => {
+      expect(new PeerBook(dir).add('ws://192.168.0.10:6001')).toBe(false);
+      await writeFile(
+        path.join(dir, 'peers.json'),
+        `${JSON.stringify({ urls: ['ws://192.168.0.10:6001', 'ws://192.0.2.1:6001'] }, null, 2)}\n`,
+      );
+      const loaded = new PeerBook(dir);
+      await loaded.load();
+      expect(loaded.list()).toEqual(['/ip4/192.0.2.1/tcp/6001/ws']);
+    });
   });
 });

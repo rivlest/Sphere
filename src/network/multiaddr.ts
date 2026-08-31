@@ -2,7 +2,7 @@
 
 export function isPeerAddress(addr: string): boolean {
   const value = addr.trim();
-  if (value.length === 0 || value.length > 512) return false;
+  if (value.length === 0 || value.length > 2048) return false;
   if (/^wss?:\/\/[^/\s]+/i.test(value)) return true;
   return value.startsWith('/') && /\/(tcp|udp|ws|wss|p2p|dnsaddr)\b/.test(value);
 }

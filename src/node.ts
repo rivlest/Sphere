@@ -13,6 +13,7 @@ import { P2PNetwork, type PeerSocket, normalizePeerUrl } from './network/p2p.js'
 import { DEFAULT_SEED_PEERS } from './network/seeds.js';
 import { fetchBootstrapPeers, LIBP2P_BOOTSTRAP } from './network/discovery.js';
 import {
+  isDialablePeerAddress,
   isGossipablePeerAddress,
   looksLikeBootstrapAddr,
   MESH_READY_BOOTSTRAP_PEERS,
@@ -58,6 +59,7 @@ export class SphereNode {
   private mineAbort: AbortController | null = null;
   private persistQueue: Promise<void> = Promise.resolve();
   private chainLock: Promise<void> = Promise.resolve();
+  private inboundQueue: Promise<void> = Promise.resolve();
   httpPort = 0;
   p2pPort = 0;
 
@@ -254,10 +256,10 @@ export class SphereNode {
       void this.onPeerBlock(block, from);
     });
     this.p2p.on('transaction', (tx: Transaction, from: PeerSocket) => {
-      this.onPeerTransaction(tx, from);
+      this.enqueueInbound(() => this.onPeerTransaction(tx, from));
     });
     this.p2p.on('chain', (data: unknown, from: PeerSocket) => {
-      void this.onPeerChainData(data, from);
+      this.enqueueInbound(() => this.onPeerChainData(data, from));
     });
     this.p2p.on('queryChain', (from: PeerSocket, query?: ChainQuery) => {
       void this.respondChain(from, query);
@@ -315,7 +317,7 @@ export class SphereNode {
   }
 
   private async tryDial(url: string): Promise<void> {
-    if (!isPeerUrl(url)) return;
+    if (!isPeerUrl(url) || !isDialablePeerAddress(url)) return;
     try {
       await this.p2p.connect(url);
       this.peerBook.markSuccess(url);
@@ -511,6 +513,15 @@ export class SphereNode {
       () => undefined,
     );
     return run;
+  }
+
+  private enqueueInbound(work: () => Promise<void> | void): void {
+    this.inboundQueue = this.inboundQueue
+      .then(work)
+      .then(
+        () => undefined,
+        () => undefined,
+      );
   }
 
   private persist(): void {
