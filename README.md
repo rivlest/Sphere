@@ -235,7 +235,6 @@ macOS / Linux: `cp .env.example .env` instead of `copy`. More detail: [`sphere-w
 3. Genesis starts **easy** (`bits` `0x20ffffff`) so the first blocks can be found with almost no hashrate.
 4. About every **144 blocks** (~1 day at 10 min), difficulty moves toward a 10-minute average, at most **×1.4 harder or easier**.
 5. If no block appears for **>100 minutes**, difficulty eases immediately (and after a long outage can fall back to genesis). The chain cannot freeze forever.
-6. “Harder than Bitcoin” means **each hash is more expensive**, not that Sphere matches Bitcoin’s global SHA-256d farms.
 
 You mine by running `npm run start -- --mine --miner-address …`. There is no separate miner binary yet.
 
