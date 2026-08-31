@@ -90,6 +90,21 @@ describe('blockchain', () => {
     expect(await shorter.replaceChain(longer.getBlocks())).toBe(true);
     expect(shorter.height).toBe(2);
   });
+
+  it('reads old block bodies from disk after the RAM cache evicts them', async () => {
+    await withTempDir(async (dir) => {
+      const store = new BinaryChainStore(dir);
+      const chain = await Blockchain.openArchive(TEST_CONFIG, store, 3);
+      for (let i = 0; i < 8; i++) {
+        await mineEmptyBlock(chain, faucetAddress());
+      }
+      expect(chain.height).toBe(8);
+      expect(chain.getBlockByHeight(1)).toBeUndefined();
+      const fromDisk = await chain.fetchBlock(1);
+      expect(fromDisk?.header.index).toBe(1);
+      expect(fromDisk?.hash).toBe(chain.hashAt(1));
+    });
+  });
 });
 
 describe('mempool', () => {

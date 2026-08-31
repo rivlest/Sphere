@@ -21,6 +21,13 @@ export interface ChainStore {
   save(chain: Block[]): Promise<void>;
 }
 
+export interface BlockArchive {
+  iterateBlocks(): AsyncGenerator<Block>;
+  readBlock(height: number): Promise<Block | undefined>;
+  appendBlock(block: Block): Promise<void>;
+  truncateTo(count: number): Promise<void>;
+}
+
 export class JsonFileChainStore implements ChainStore {
   constructor(private readonly dataDir: string) {}
 
@@ -62,7 +69,9 @@ export class JsonFileChainStore implements ChainStore {
   }
 }
 
-export class BinaryChainStore implements ChainStore {
+export class BinaryChainStore implements ChainStore, BlockArchive {
+  private index: IndexEntry[] | null = null;
+
   constructor(private readonly dataDir: string) {}
 
   private get datPath(): string {
@@ -104,7 +113,7 @@ export class BinaryChainStore implements ChainStore {
 
   async save(chain: Block[]): Promise<void> {
     await mkdir(this.dataDir, { recursive: true });
-    const existing = await this.readIndex();
+    const existing = await this.ensureIndex();
     let fork = 0;
     while (fork < existing.length && fork < chain.length && existing[fork]!.hash === chain[fork]!.hash) {
       fork += 1;
@@ -115,7 +124,7 @@ export class BinaryChainStore implements ChainStore {
     }
 
     if (fork < existing.length) {
-      await this.truncateTo(fork, existing);
+      await this.truncateTo(fork);
     }
 
     if (fork === 0 && existing.length === 0) {
@@ -126,6 +135,68 @@ export class BinaryChainStore implements ChainStore {
     for (let i = fork; i < chain.length; i++) {
       await this.appendBlock(chain[i]!);
     }
+  }
+
+  get length(): number {
+    return this.index?.length ?? 0;
+  }
+
+  async readBlock(height: number): Promise<Block | undefined> {
+    const index = await this.ensureIndex();
+    const entry = index[height];
+    if (!entry) return undefined;
+    return this.readEntry(entry);
+  }
+
+  async *iterateBlocks(): AsyncGenerator<Block> {
+    const index = await this.ensureIndex();
+    if (index.length === 0) return;
+    const handle = await open(this.datPath, 'r');
+    try {
+      for (const entry of index) {
+        yield await this.readEntryFrom(handle, entry);
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async appendBlock(block: Block): Promise<void> {
+    await mkdir(this.dataDir, { recursive: true });
+    const index = await this.ensureIndex();
+    if (index.length === 0) {
+      await writeFile(this.datPath, Buffer.alloc(0));
+    }
+    const record = encodeRecord(encodeBlock(block));
+    const handle = await open(this.datPath, 'a');
+    let offset = 0;
+    try {
+      offset = (await handle.stat()).size;
+      await handle.write(record);
+    } finally {
+      await handle.close();
+    }
+    index.push({ offset, length: record.length, hash: block.hash });
+    await this.writeIndex(index);
+  }
+
+  async truncateTo(count: number): Promise<void> {
+    const existing = await this.ensureIndex();
+    if (count >= existing.length) return;
+    if (count === 0) {
+      await writeFile(this.datPath, Buffer.alloc(0));
+      await this.writeIndex([]);
+      return;
+    }
+    const last = existing[count - 1]!;
+    const end = last.offset + last.length;
+    const handle = await open(this.datPath, 'r+');
+    try {
+      await handle.truncate(end);
+    } finally {
+      await handle.close();
+    }
+    await this.writeIndex(existing.slice(0, count));
   }
 
   private async loadBinary(): Promise<Block[] | null> {
@@ -168,6 +239,7 @@ export class BinaryChainStore implements ChainStore {
   }
 
   private async writeIndex(entries: IndexEntry[]): Promise<void> {
+    this.index = entries;
     const tmp = `${this.idxPath}.tmp`;
     await writeFile(tmp, encodeIndex(entries));
     try {
@@ -179,35 +251,38 @@ export class BinaryChainStore implements ChainStore {
     await rename(tmp, this.idxPath);
   }
 
-  private async truncateTo(count: number, existing: IndexEntry[]): Promise<void> {
-    if (count === 0) {
-      await writeFile(this.datPath, Buffer.alloc(0));
-      await this.writeIndex([]);
-      return;
-    }
-    const last = existing[count - 1]!;
-    const end = last.offset + last.length;
-    const handle = await open(this.datPath, 'r+');
-    try {
-      await handle.truncate(end);
-    } finally {
-      await handle.close();
-    }
-    await this.writeIndex(existing.slice(0, count));
+  private async ensureIndex(): Promise<IndexEntry[]> {
+    if (this.index) return this.index;
+    this.index = await this.readIndex();
+    return this.index;
   }
 
-  private async appendBlock(block: Block): Promise<void> {
-    const record = encodeRecord(encodeBlock(block));
-    const handle = await open(this.datPath, 'a');
-    let offset = 0;
+  private async readEntry(entry: IndexEntry): Promise<Block> {
+    const handle = await open(this.datPath, 'r');
     try {
-      offset = (await handle.stat()).size;
-      await handle.write(record);
+      return await this.readEntryFrom(handle, entry);
     } finally {
       await handle.close();
     }
-    const index = await this.readIndex();
-    index.push({ offset, length: record.length, hash: block.hash });
-    await this.writeIndex(index);
+  }
+
+  private async readEntryFrom(
+    handle: Awaited<ReturnType<typeof open>>,
+    entry: IndexEntry,
+  ): Promise<Block> {
+    const buf = Buffer.alloc(entry.length);
+    const { bytesRead } = await handle.read(buf, 0, entry.length, entry.offset);
+    if (bytesRead !== entry.length) {
+      throw new Error(`Short chain.dat read at offset ${entry.offset}`);
+    }
+    const { payload, length } = decodeRecord(buf, 0);
+    if (length !== entry.length) {
+      throw new Error(`Index length mismatch at offset ${entry.offset}`);
+    }
+    const block = decodeBlock(payload);
+    if (block.hash !== entry.hash) {
+      throw new Error('Index hash does not match block payload');
+    }
+    return block;
   }
 }

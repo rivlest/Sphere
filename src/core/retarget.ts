@@ -21,7 +21,7 @@ export const STALL_FACTOR = 10;
  *   That is the 100-year equilibrium: work tracks hashrate instead of ratcheting away.
  */
 export function computeNextBits(
-  chain: Block[],
+  chain: Array<Pick<Block, 'header'>>,
   config: ChainConfig,
   nextTimestamp?: number,
 ): number {
@@ -70,7 +70,7 @@ function easeAfterStall(
 }
 
 function windowTimespan(
-  chain: Block[],
+  chain: Array<Pick<Block, 'header'>>,
   interval: number,
   targetBlockTimeMs: number,
 ): { actualMs: number; expectedMs: number } {

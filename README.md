@@ -321,7 +321,7 @@ CORS is enabled so the browser wallet can call a local node.
 - Retarget every **144** blocks: `new_target = old × actual / expected`, clamped to ×1.4 / ÷1.4
 - Stall valve: gap **>10×** target spacing (100 min) eases ×1.4 per such window, capped at genesis
 - Mempool: highest fee first, max 500 transactions per block, 1 hour TTL
-- P2P: libp2p (WebSocket + TCP, Noise, Identify, ping, Kademlia `/sphere/kad/1.0.0`, mDNS, optional public DHT + circuit relay)
+- P2P: libp2p (WebSocket + TCP, Sphere DHT, mDNS, optional public DHT + circuit relay). Chain sync is batched (32 blocks per message); full block bodies live on disk (`chain.dat`), not as one 50 MB dump.
 
 ---
 
@@ -353,7 +353,7 @@ src/wallet            keys, addresses, signatures
 src/mempool           pending transactions
 src/network           libp2p (WebSocket + TCP, Sphere DHT, mDNS, discovery)
 src/api               Express REST API
-src/storage           append-only chain.dat + chain.idx
+src/storage           append-only chain.dat + chain.idx (bodies on disk; RAM keeps headers + UTXO)
 src/cli               node + wallet-cli
 sphere-wallet-web     browser wallet (Vite / React)
 ```

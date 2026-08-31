@@ -116,10 +116,20 @@ export type MessageType =
   | 'QUERY_PEERS'
   | 'RESPONSE_PEERS';
 
+export interface ChainQuery {
+  fromHeight: number;
+}
+
+export interface ChainBatch {
+  fromHeight: number;
+  blocks: Block[];
+  more: boolean;
+}
+
 export type P2PMessage =
   | { type: 'NEW_BLOCK'; data: Block }
   | { type: 'NEW_TRANSACTION'; data: Transaction }
-  | { type: 'QUERY_CHAIN' }
-  | { type: 'RESPONSE_CHAIN'; data: Block[] }
+  | { type: 'QUERY_CHAIN'; data?: ChainQuery }
+  | { type: 'RESPONSE_CHAIN'; data: ChainBatch | Block[] }
   | { type: 'QUERY_PEERS' }
   | { type: 'RESPONSE_PEERS'; data: string[] };

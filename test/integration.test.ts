@@ -62,6 +62,27 @@ describe('multi-node integration', () => {
     expect(nodeC.mempool.get(tx.hash)).toBeUndefined();
   }, 60_000);
 
+  it('syncs more blocks than one P2P batch', async () => {
+    const miner = createWallet();
+    const nodeA = await startTestNode({ minerAddress: miner.address });
+    nodes.push(nodeA);
+    for (let i = 0; i < 40; i++) {
+      await nodeA.mineOneBlock();
+    }
+    expect(nodeA.blockchain.height).toBe(40);
+
+    const nodeB = await startTestNode({
+      peers: [`ws://127.0.0.1:${nodeA.p2pPort}`],
+    });
+    nodes.push(nodeB);
+
+    await waitFor(() => nodeB.blockchain.height >= 40, 30_000);
+    expect(nodeB.blockchain.latestBlock.hash).toBe(nodeA.blockchain.latestBlock.hash);
+    expect(await nodeB.blockchain.fetchBlock(1)).toMatchObject({
+      header: { index: 1 },
+    });
+  }, 60_000);
+
   it('reloads the chain from disk after a restart', async () => {
     const node = await startTestNode();
     nodes.push(node);

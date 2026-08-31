@@ -414,7 +414,7 @@ export class P2PNetwork extends EventEmitter {
         this.emit('transaction', message.data, from);
         break;
       case 'QUERY_CHAIN':
-        this.emit('queryChain', from);
+        this.emit('queryChain', from, message.data);
         break;
       case 'RESPONSE_CHAIN':
         this.emit('chain', message.data, from);

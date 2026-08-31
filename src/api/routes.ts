@@ -30,23 +30,23 @@ export function createRoutes(node: SphereNode): Router {
     });
   });
 
-  router.get('/blocks', (req, res) => {
+  router.get('/blocks', async (req, res) => {
     const from = parseInteger(req.query.from, 0);
     const limit = Math.min(parseInteger(req.query.limit, 20), 100);
-    const blocks = node.blockchain.getBlocks();
+    const blocks = await node.blockchain.getBlocksRange(from, limit);
     res.json({
-      total: blocks.length,
+      total: node.blockchain.length,
       from,
-      blocks: blocks.slice(from, from + limit),
+      blocks,
     });
   });
 
-  router.get('/blocks/:hashOrHeight', (req, res) => {
+  router.get('/blocks/:hashOrHeight', async (req, res) => {
     const { hashOrHeight } = req.params;
     const block =
       /^\d+$/.test(hashOrHeight) && hashOrHeight.length < 12
-        ? node.blockchain.getBlockByHeight(Number(hashOrHeight))
-        : node.blockchain.getBlockByHash(hashOrHeight);
+        ? await node.blockchain.fetchBlock(Number(hashOrHeight))
+        : await node.blockchain.fetchBlockByHash(hashOrHeight);
     if (!block) {
       res.status(404).json({ error: 'Block not found' });
       return;
@@ -93,7 +93,7 @@ export function createRoutes(node: SphereNode): Router {
     res.json(await buildMarketSnapshot(node));
   });
 
-  router.get('/transactions/:address', (req, res) => {
+  router.get('/transactions/:address', async (req, res) => {
     const { address } = req.params;
     if (!isValidAddress(address)) {
       res.status(400).json({ error: 'Invalid address' });
@@ -102,11 +102,24 @@ export function createRoutes(node: SphereNode): Router {
     const limit = Math.min(parseInteger(req.query.limit, 50), 200);
     const resolve = (txid: string, vout: number) => node.blockchain.resolveOutpoint(txid, vout);
     const confirmed = [];
-    for (const block of node.blockchain.getBlocks()) {
+    const length = node.blockchain.length;
+    for (let height = 0; height < length; height++) {
+      const block = await node.blockchain.fetchBlock(height);
+      if (!block) continue;
       for (const tx of block.transactions) {
-        if (transactionTouchesAddress(tx, address, resolve)) {
+        const deep = await Promise.all(
+          tx.inputs.map(async (input) => {
+            const live = resolve(input.txid, input.vout);
+            if (live) return live;
+            return node.blockchain.resolveOutpointDeep(input.txid, input.vout);
+          }),
+        );
+        const touches =
+          tx.outputs.some((output) => output.address === address) ||
+          deep.some((utxo) => utxo?.address === address);
+        if (touches) {
           confirmed.push({
-            ...decorateTx(tx, resolve),
+            ...decorateTx(tx, (txid, vout) => deep.find((item) => item?.txid === txid && item.vout === vout) ?? resolve(txid, vout)),
             status: 'confirmed' as const,
             blockHeight: block.header.index,
             blockHash: block.hash,

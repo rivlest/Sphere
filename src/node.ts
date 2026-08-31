@@ -1,5 +1,5 @@
 import type { Server } from 'node:http';
-import type { Block, ChainConfig, Transaction } from './types.js';
+import type { Block, ChainConfig, ChainQuery, Transaction } from './types.js';
 import { DEFAULT_CONFIG } from './types.js';
 import { Blockchain } from './core/blockchain.js';
 import { createCandidateBlock } from './core/block.js';
@@ -19,6 +19,7 @@ import {
   MESH_READY_MESH_PEERS,
 } from './network/gossip.js';
 import { PeerBook, isPeerUrl } from './network/peerBook.js';
+import { isBlockArray, isChainBatch, SYNC_BATCH_SIZE } from './network/sync.js';
 import { faucetFromEnv, type TestFaucet } from './api/faucet.js';
 import { startApiServer } from './api/server.js';
 
@@ -232,19 +233,20 @@ export class SphereNode {
   }
 
   private async loadChain(): Promise<void> {
-    const snapshot = await this.store.load();
     try {
-      this.blockchain = snapshot
-        ? await Blockchain.open(this.config, snapshot)
-        : await Blockchain.open(this.config);
+      if (this.store instanceof BinaryChainStore) {
+        this.blockchain = await Blockchain.openArchive(this.config, this.store);
+      } else {
+        const snapshot = await this.store.load();
+        this.blockchain = snapshot
+          ? await Blockchain.open(this.config, snapshot)
+          : await Blockchain.open(this.config);
+        if (!snapshot) await this.persist();
+      }
     } catch (error) {
       throw new Error(`Failed to load chain snapshot: ${(error as Error).message}`);
     }
-    if (!snapshot) {
-      await this.persist();
-      return;
-    }
-    this.log(`loaded ${snapshot.length} blocks from disk`);
+    this.log(`loaded ${this.blockchain.length} blocks from disk`);
   }
 
   private bindP2P(): void {
@@ -254,14 +256,11 @@ export class SphereNode {
     this.p2p.on('transaction', (tx: Transaction, from: PeerSocket) => {
       this.onPeerTransaction(tx, from);
     });
-    this.p2p.on('chain', (chain: Block[]) => {
-      void this.onPeerChain(chain);
+    this.p2p.on('chain', (data: unknown, from: PeerSocket) => {
+      void this.onPeerChainData(data, from);
     });
-    this.p2p.on('queryChain', (from: PeerSocket) => {
-      this.p2p.send(from, { type: 'RESPONSE_CHAIN', data: this.blockchain.getBlocks() });
-      for (const tx of this.mempool.getAll()) {
-        this.p2p.send(from, { type: 'NEW_TRANSACTION', data: tx });
-      }
+    this.p2p.on('queryChain', (from: PeerSocket, query?: ChainQuery) => {
+      void this.respondChain(from, query);
     });
     this.p2p.on('queryPeers', (from: PeerSocket) => {
       this.p2p.send(from, { type: 'RESPONSE_PEERS', data: this.gossipPeerUrls() });
@@ -270,10 +269,25 @@ export class SphereNode {
       void this.connectDiscovered(peers);
     });
     this.p2p.on('peerOpen', (from: PeerSocket) => {
-      this.p2p.send(from, { type: 'QUERY_CHAIN' });
+      this.p2p.send(from, {
+        type: 'QUERY_CHAIN',
+        data: { fromHeight: this.blockchain.height + 1 },
+      });
       this.p2p.send(from, { type: 'QUERY_PEERS' });
       this.p2p.send(from, { type: 'RESPONSE_PEERS', data: this.gossipPeerUrls() });
     });
+  }
+
+  private async respondChain(from: PeerSocket, query?: ChainQuery): Promise<void> {
+    const fromHeight = Math.max(0, Math.floor(query?.fromHeight ?? 0));
+    const blocks = await this.blockchain.getBlocksRange(fromHeight, SYNC_BATCH_SIZE);
+    const more = fromHeight + blocks.length < this.blockchain.length;
+    this.p2p.send(from, { type: 'RESPONSE_CHAIN', data: { fromHeight, blocks, more } });
+    if (!more) {
+      for (const tx of this.mempool.getAll()) {
+        this.p2p.send(from, { type: 'NEW_TRANSACTION', data: tx });
+      }
+    }
   }
 
   private gossipPeerUrls(): string[] {
@@ -350,45 +364,92 @@ export class SphereNode {
 
   private async onPeerBlock(block: Block, from: PeerSocket): Promise<void> {
     await this.withChain(async () => {
-      if (this.blockchain.getBlockByHash(block.hash)) return;
+      if (this.blockchain.hasBlockHash(block.hash)) return;
       try {
         await this.blockchain.addBlock(block);
         this.afterAcceptedBlock(block, from);
         this.log(`accepted block #${block.header.index} ${block.hash.slice(0, 12)}… from peer`);
       } catch {
         if (block.header.index > this.blockchain.height) {
-          this.p2p.send(from, { type: 'QUERY_CHAIN' });
+          this.p2p.send(from, {
+            type: 'QUERY_CHAIN',
+            data: { fromHeight: this.blockchain.height + 1 },
+          });
         }
       }
     });
   }
 
-  private async onPeerChain(chain: Block[]): Promise<void> {
-    const applied = await this.withChain(async () => {
-      if (!Array.isArray(chain) || chain.length <= this.blockchain.length) return null;
-      const previous = this.blockchain.getBlocks();
-      const fork = this.blockchain.forkIndex(chain);
-      try {
-        if (!(await this.blockchain.replaceChain(chain))) return null;
-      } catch (error) {
-        this.log(`rejected peer chain: ${(error as Error).message}`);
-        return null;
-      }
-      return { previous, fork };
-    });
-    if (!applied) return;
-    const { previous, fork } = applied;
+  private async onPeerChainData(data: unknown, from: PeerSocket): Promise<void> {
+    if (isChainBatch(data)) {
+      await this.onChainBatch(data, from);
+      return;
+    }
+    if (isBlockArray(data)) {
+      await this.onChainBatch(
+        { fromHeight: data[0]?.header.index ?? 0, blocks: data, more: false },
+        from,
+      );
+    }
+  }
 
-    this.mempool.removeMany(collectTxHashes(chain));
-    const orphaned = previous.slice(fork).flatMap((block) => block.transactions);
-    this.mempool.requeueValid(
-      orphaned,
-      (txid, vout) => this.blockchain.getUtxo(txid, vout),
-      (hash) => this.blockchain.hasTransaction(hash),
-    );
-    this.interruptMining();
-    this.persist();
-    this.log(`reorg to height ${this.blockchain.height}`);
+  private async onChainBatch(
+    batch: { fromHeight: number; blocks: Block[]; more: boolean },
+    from: PeerSocket,
+  ): Promise<void> {
+    const advanced = await this.withChain(async () => {
+      let applied = 0;
+      let height = batch.fromHeight;
+      for (const block of batch.blocks) {
+        if (block.header.index !== height) {
+          this.log(`ignored misindexed peer block at ${height}`);
+          break;
+        }
+        const have = this.blockchain.hashAt(height);
+        if (have === block.hash) {
+          height += 1;
+          continue;
+        }
+        if (have && have !== block.hash) {
+          if (height === 0) {
+            this.log('rejected peer chain: different genesis');
+            return 0;
+          }
+          await this.blockchain.rewindTo(height - 1);
+        }
+        if (block.header.index !== this.blockchain.height + 1) {
+          this.p2p.send(from, {
+            type: 'QUERY_CHAIN',
+            data: { fromHeight: this.blockchain.height + 1 },
+          });
+          return applied;
+        }
+        try {
+          await this.blockchain.addBlock(block);
+        } catch (error) {
+          this.log(`rejected peer block #${block.header.index}: ${(error as Error).message}`);
+          break;
+        }
+        this.mempool.removeMany(block.transactions.map((tx) => tx.hash));
+        applied += 1;
+        height += 1;
+      }
+      if (applied > 0) {
+        this.interruptMining();
+        this.persist();
+        const tip = this.blockchain.latestBlock;
+        this.p2p.broadcast({ type: 'NEW_BLOCK', data: tip }, from);
+        this.log(`synced to height ${this.blockchain.height}`);
+      }
+      return applied;
+    });
+
+    if (batch.more || (advanced === 0 && batch.blocks.length > 0 && batch.fromHeight > this.blockchain.height + 1)) {
+      this.p2p.send(from, {
+        type: 'QUERY_CHAIN',
+        data: { fromHeight: this.blockchain.height + 1 },
+      });
+    }
   }
 
   private async acceptLocalBlock(block: Block): Promise<void> {
@@ -453,6 +514,7 @@ export class SphereNode {
   }
 
   private persist(): void {
+    if (this.store instanceof BinaryChainStore) return;
     const snapshot = this.blockchain.getBlocks();
     this.persistQueue = this.persistQueue
       .then(() => this.store.save(snapshot))
@@ -466,10 +528,6 @@ export class SphereNode {
       console.log(`[sphere] ${message}`);
     }
   }
-}
-
-function collectTxHashes(chain: Block[]): string[] {
-  return chain.flatMap((block) => block.transactions.map((tx) => tx.hash));
 }
 
 function isAbortError(error: unknown): boolean {
