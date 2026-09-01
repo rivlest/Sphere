@@ -55,7 +55,7 @@ Windows, macOS, and Linux all work. The wallet CLI tries `http://127.0.0.1:3001`
 
 ## Quick start
 
-Do **1 → 2 → 3 → 4** once (install, clone, wallet, node). Then pick from the table.
+Do **1 > 2 > 3 > 4** once (install, clone, wallet, node). Then pick from the table.
 
 | I want to… | What to run |
 | --- | --- |
