@@ -27,7 +27,7 @@ Start a node, then:
 curl http://127.0.0.1:3001/status
 ```
 
-You should see JSON with `"name": "Sphere"`, a `height`, `bits`, and `latestHash`. Rising `height` means blocks are being found.
+You should see JSON with `"name": "Sphere"`, `"version"` (software release, see [CHANGELOG.md](CHANGELOG.md)), a `height`, `bits`, and `latestHash`. Rising `height` means blocks are being found. Seed and miners should show the **same** `version` after an update.
 
 The public seed `ws://57.128.203.234:6001` is the bootstrap **and circuit relay** so miners behind NAT form a mesh. Check `"meshReady"`:
 
@@ -301,7 +301,7 @@ Base URL: your node (`http://127.0.0.1:3001`).
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/status` | Height, `bits`, work, peers, `meshPeers`, `meshReady`, mining, tip hash |
+| GET | `/status` | Software `version`, height, `bits`, work, peers, `meshReady`, mining, tip hash |
 | GET | `/blocks?from=&limit=` | Paginated blocks |
 | GET | `/blocks/:hashOrHeight` | One block |
 | GET | `/balance/:address` | Spendable UTXOs (Orbs + SPH) |
@@ -366,6 +366,7 @@ src/api               Express REST API
 src/storage           append-only chain.dat + chain.idx (bodies on disk; RAM keeps headers + UTXO)
 src/cli               node + wallet-cli
 sphere-wallet-web     browser wallet (Vite / React)
+CHANGELOG.md          software versions (x.y.z) — not the chain protocol
 ```
 
 Convert a UTXO `chain.json` with `npm run migrate-chain -- --from data/chain.json --to data-bin`. Account-based snapshots cannot be converted.

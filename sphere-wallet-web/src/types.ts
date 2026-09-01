@@ -125,4 +125,5 @@ export interface NodeStatus {
   mining: boolean;
   mempool: number;
   latestHash: string;
+  version?: string;
 }

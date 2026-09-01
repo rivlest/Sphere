@@ -28,6 +28,7 @@ import { PeerScore } from './network/peerScore.js';
 import { headerPoWValid, isBlockArray, isBodyBatch, isChainBatch, isHeaderBatch, SYNC_BATCH_SIZE } from './network/sync.js';
 import { faucetFromEnv, type TestFaucet } from './api/faucet.js';
 import { startApiServer } from './api/server.js';
+import { SPHERE_VERSION } from './version.js';
 
 export interface NodeOptions {
   httpPort: number;
@@ -134,6 +135,7 @@ export class SphereNode {
     this.httpServer = api.server;
     this.httpPort = api.port;
 
+    this.log(`Sphere ${SPHERE_VERSION}`);
     this.log(`REST API on http://${this.rpcHost === '0.0.0.0' ? '127.0.0.1' : this.rpcHost}:${this.httpPort}`);
     this.log(`P2P on ${advertised}`);
     this.log(

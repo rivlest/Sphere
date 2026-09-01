@@ -5,6 +5,7 @@ import type { SphereNode } from '../node.js';
 import { parseAddress } from '../wallet/address.js';
 import { formatOrbsToSph } from '../core/units.js';
 import { NETWORK_NAME, TICKER, type Transaction } from '../types.js';
+import { SPHERE_VERSION } from '../version.js';
 import { summarizeTransaction, transactionTouchesAddress, type Utxo } from '../core/transaction.js';
 import { buildMarketSnapshot } from './marketSnapshot.js';
 import { marketPrice } from './marketPrice.js';
@@ -19,6 +20,7 @@ export function createRoutes(node: SphereNode): Router {
     res.json({
       name: NETWORK_NAME,
       symbol: TICKER,
+      version: SPHERE_VERSION,
       height: node.blockchain.height,
       bits: node.blockchain.bits,
       difficulty: node.blockchain.difficulty,

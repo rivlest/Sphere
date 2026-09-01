@@ -3,11 +3,13 @@ import { SphereNode } from '../node.js';
 import { isValidAddress } from '../wallet/keys.js';
 import { parseAddress } from '../wallet/address.js';
 import { assertWillJoinNetwork } from './networkGuard.js';
+import { SPHERE_VERSION } from '../version.js';
 
 const program = new Command();
 
 program
   .name('sphere')
+  .version(SPHERE_VERSION)
   .description('Sphere Proof-of-Work node')
   .option('--port <number>', 'REST API port', '3001')
   .option('--p2p-port <number>', 'P2P listen port (WebSocket; TCP is port+1 when fixed)', '6001')
