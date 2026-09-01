@@ -126,4 +126,6 @@ export interface NodeStatus {
   mempool: number;
   latestHash: string;
   version?: string;
+  latestVersion?: string | null;
+  outdated?: boolean;
 }

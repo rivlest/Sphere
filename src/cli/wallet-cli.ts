@@ -7,6 +7,8 @@ import { createSignedTransaction } from '../core/transaction.js';
 import { parseSphToOrbs, formatOrbsToSph } from '../core/units.js';
 import { LOCAL_REST } from '../network/seeds.js';
 import { nodeUnreachableMessage, resolveRestUrl, restUrlWasExplicit } from '../wallet/rest.js';
+import { SPHERE_VERSION, isOutdated, outdatedNotice } from '../version.js';
+import { fetchPublishedVersion } from '../updateCheck.js';
 
 const program = new Command();
 program.name('wallet-cli').description('Sphere wallet utilities');
@@ -42,6 +44,7 @@ program
       );
     }
     const base = await resolveRestUrl(cmd.node, restUrlWasExplicit());
+    await warnIfOutdated(base);
     const body = await requestJson(`${base}/balance/${parsed.canonical}`);
     console.log(`Node:       ${base}`);
     console.log(`Address:    ${encodeDisplayAddress(parsed.canonical)}`);
@@ -69,6 +72,7 @@ program
       const amount = parseSphToOrbs(cmd.amount);
       const fee = parseSphToOrbs(cmd.fee);
       const base = await resolveRestUrl(cmd.node, restUrlWasExplicit());
+      await warnIfOutdated(base);
       const account = await requestJson(`${base}/balance/${wallet.address}`);
       const utxos = (account.utxos ?? []) as Array<{
         txid: string;
@@ -103,6 +107,29 @@ program.parseAsync(process.argv).catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
 });
+
+async function warnIfOutdated(nodeBase: string): Promise<void> {
+  try {
+    const published = await fetchPublishedVersion();
+    const status = await requestJson(`${nodeBase}/status`);
+    const nodeVersion = typeof status.version === 'string' ? status.version : null;
+    if (!nodeVersion) {
+      console.error('outdated: this node has no version field. Update with: git pull');
+      return;
+    }
+    if (published && isOutdated(SPHERE_VERSION, published)) {
+      console.error(outdatedNotice(SPHERE_VERSION, published));
+    }
+    const nodeLooksLikeRawSemver = /^\d+\.\d+\.\d+$/.test(nodeVersion.trim());
+    if (status.outdated === true) {
+      console.error(outdatedNotice(nodeVersion, published ?? nodeVersion));
+    } else if (published && nodeLooksLikeRawSemver && isOutdated(nodeVersion, published)) {
+      console.error(outdatedNotice(nodeVersion, published));
+    }
+  } catch {
+    // Status or GitHub unreachable — do not block balance/send.
+  }
+}
 
 function required(value: string | undefined, flag: string): string {
   if (!value) throw new Error(`${flag} is required`);

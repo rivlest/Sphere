@@ -1,6 +1,6 @@
 {
   "name": "sphere",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Sphere (SPH) — a local Proof-of-Work UTXO Layer 1 blockchain",
   "type": "module",
   "engines": {

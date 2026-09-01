@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
 import { OrbMark } from './OrbMark';
+import { UpdateBanner } from './UpdateBanner';
 
 function BrandMark() {
   return (
@@ -44,6 +45,7 @@ export function Shell() {
         )}
       </header>
       <main className="flex-1">
+        {authed && <UpdateBanner />}
         <Outlet />
       </main>
       <footer className="mt-12 border-t border-white/10 pt-4 text-center text-xs leading-relaxed text-mute">

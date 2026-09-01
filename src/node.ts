@@ -28,7 +28,8 @@ import { PeerScore } from './network/peerScore.js';
 import { headerPoWValid, isBlockArray, isBodyBatch, isChainBatch, isHeaderBatch, SYNC_BATCH_SIZE } from './network/sync.js';
 import { faucetFromEnv, type TestFaucet } from './api/faucet.js';
 import { startApiServer } from './api/server.js';
-import { SPHERE_VERSION } from './version.js';
+import { SPHERE_VERSION, isOutdated, outdatedNotice, sphereCoreLabel } from './version.js';
+import { fetchPublishedVersion } from './updateCheck.js';
 
 export interface NodeOptions {
   httpPort: number;
@@ -72,6 +73,7 @@ export class SphereNode {
   private persistQueue: Promise<void> = Promise.resolve();
   private chainLock: Promise<void> = Promise.resolve();
   private inboundQueue: Promise<void> = Promise.resolve();
+  latestPublishedVersion: string | null = null;
   httpPort = 0;
   p2pPort = 0;
 
@@ -102,6 +104,12 @@ export class SphereNode {
       internetDiscovery: options.useDefaultSeeds !== false && !this.silent,
       offerRelay: Boolean(options.advertisedP2pUrl),
     });
+  }
+
+  get isOutdated(): boolean {
+    return Boolean(
+      this.latestPublishedVersion && isOutdated(SPHERE_VERSION, this.latestPublishedVersion),
+    );
   }
 
   get isMining(): boolean {
@@ -135,7 +143,8 @@ export class SphereNode {
     this.httpServer = api.server;
     this.httpPort = api.port;
 
-    this.log(`Sphere ${SPHERE_VERSION}`);
+    this.log(sphereCoreLabel());
+    await this.checkForUpdate();
     this.log(`REST API on http://${this.rpcHost === '0.0.0.0' ? '127.0.0.1' : this.rpcHost}:${this.httpPort}`);
     this.log(`P2P on ${advertised}`);
     this.log(
@@ -156,6 +165,16 @@ export class SphereNode {
 
     if (this.shouldMine) {
       this.startMining();
+    }
+  }
+
+  private async checkForUpdate(): Promise<void> {
+    if (this.silent) return;
+    const latest = await fetchPublishedVersion();
+    if (!latest) return;
+    this.latestPublishedVersion = latest;
+    if (isOutdated(SPHERE_VERSION, latest)) {
+      this.log(outdatedNotice(SPHERE_VERSION, latest));
     }
   }
 

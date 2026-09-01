@@ -3,7 +3,7 @@ import { resetCmcCache } from '../src/api/coinMarketCap.js';
 import { faucetAddress } from '../src/core/genesis.js';
 import { startTestNode } from './helpers.js';
 import type { SphereNode } from '../src/node.js';
-import { SPHERE_VERSION } from '../src/version.js';
+import { SPHERE_VERSION, sphereCoreLabel } from '../src/version.js';
 
 const nodes: SphereNode[] = [];
 
@@ -39,11 +39,13 @@ describe('wallet-facing REST API', () => {
       meshPeers: number;
       peers: number;
       version: string;
+      outdated: boolean;
     }>(res);
     expect(body.meshReady).toBe(false);
     expect(body.meshPeers).toBe(0);
     expect(body.peers).toBe(0);
-    expect(body.version).toBe(SPHERE_VERSION);
+    expect(body.version).toBe(sphereCoreLabel(SPHERE_VERSION));
+    expect(body.outdated).toBe(false);
   });
 
   it('returns spendable UTXOs on GET /balance/:address', async () => {

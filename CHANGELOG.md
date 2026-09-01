@@ -1,10 +1,15 @@
 # Changelog
 
-Sphere software version (`GET /status` → `"version"`). This is **not** `blockVersion` (that stays **3** until a hard fork).
+Sphere software version (`GET /status` → `"version": "Sphere core x.y"`). This is **not** `blockVersion` (that stays **3** until a hard fork).
 
-Format: **x.y.z** — bump **y** for a public node/wallet release, **z** for a small fix.
+Format: **x.y.z** internally — bump **y** for a public node/wallet release, **z** for a small fix. `/status` shows only **x.y**.
 
 ---
+
+## 1.2.1 — 2026-09-01
+
+- Warn when GitHub `master` is newer: node log, `GET /status` (`outdated`), wallet CLI, web wallet. Update with `git pull`.
+- `GET /status` `version` is `Sphere core x.y` (not a bare semver string).
 
 ## 1.2.0 — 2026-09-01
 
