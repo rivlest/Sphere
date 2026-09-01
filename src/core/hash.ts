@@ -25,9 +25,12 @@ export function sha256Hex(data: string | Uint8Array): string {
   return bytesToHex(sha256Bytes(data));
 }
 
+export function doubleSha256Bytes(data: string | Uint8Array): Uint8Array {
+  return sha256(sha256Bytes(data));
+}
+
 export function doubleSha256Hex(data: string | Uint8Array): string {
-  const first = sha256Bytes(data);
-  return bytesToHex(sha256(first));
+  return bytesToHex(doubleSha256Bytes(data));
 }
 
 export function concatHexHashes(a: string, b: string): Uint8Array {

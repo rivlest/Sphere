@@ -4,6 +4,10 @@ export function restUrlWasExplicit(argv: readonly string[] = process.argv): bool
   return argv.includes('--node');
 }
 
+export function nodeUnreachableMessage(url: string): string {
+  return `Nie można połączyć się z węzłem pod ${url} — czy jest uruchomiony?`;
+}
+
 export async function resolveRestUrl(
   preferred: string,
   explicit: boolean,
@@ -20,14 +24,14 @@ export async function resolveRestUrl(
   } catch {
     const seed = DEFAULT_SEED_REST.replace(/\/$/, '');
     if (seed === first) {
-      throw new Error(`Cannot reach a Sphere node at ${first}`);
+      throw new Error(nodeUnreachableMessage(first));
     }
     try {
       await assertReachable(seed, fetchImpl);
       return seed;
     } catch {
       throw new Error(
-        `Cannot reach ${first} or ${seed}. Start a node with npm run start, or pass --node.`,
+        `${nodeUnreachableMessage(first)} Also tried ${seed}. Start a node with npm run start, or pass --node.`,
       );
     }
   }
@@ -37,9 +41,10 @@ async function assertReachable(base: string, fetchImpl: typeof fetch): Promise<v
   try {
     const response = await fetchImpl(`${base}/status`, { signal: AbortSignal.timeout(5_000) });
     if (!response.ok) {
-      throw new Error(`Cannot reach ${base}`);
+      throw new Error(nodeUnreachableMessage(base));
     }
-  } catch {
-    throw new Error(`Cannot reach ${base}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Nie można')) throw error;
+    throw new Error(nodeUnreachableMessage(base));
   }
 }

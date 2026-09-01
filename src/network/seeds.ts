@@ -1,4 +1,4 @@
-/** Compiled bootstrap. Extra public seeds go here and in bootstrap-peers.json (different hosts/regions). */
+/** Compiled bootstrap. Add extra seeds here only when they are real, independently hosted nodes (different provider/region). Placeholder IPs break discovery. */
 export const DEFAULT_SEED_PEERS: readonly string[] = ['ws://57.128.203.234:6001'];
 
 export const LOCAL_REST = 'http://127.0.0.1:3001';

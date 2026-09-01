@@ -81,7 +81,7 @@ export function SendForm() {
         return;
       }
       const tx = signTransaction({
-        to: to.trim().toLowerCase(),
+        to: checked.canonicalTo,
         amount: checked.amountOrbs,
         fee: checked.feeOrbs,
         utxos: account.utxos ?? utxos,
@@ -131,7 +131,7 @@ export function SendForm() {
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-mute">Odbiorca</dt>
-            <dd className="break-all text-right font-mono text-xs">{to.trim().toLowerCase()}</dd>
+            <dd className="break-all text-right font-mono text-xs">{validation.canonicalTo || to.trim()}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-mute">Opłata</dt>

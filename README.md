@@ -63,7 +63,7 @@ Do **1 → 2 → 3 → 4** once (install, clone, wallet, node). Then pick from t
 | Send SPH | Step 4, then step 6 |
 | Earn 50 SPH block rewards | Step 4 with `--mine --miner-address sph1…` |
 
-`0 SPH` is normal until you win a block or someone sends you coins.
+`0 SPH` is normal until you win a block or someone sends you coins. Coinbase (block reward) UTXOs cannot be spent until **100 blocks** later (~16.7 h at the 10-minute target), same wall-clock margin as Bitcoin. That rule starts at height **5328**; older blocks stay as they were.
 
 ### 1. Install Node.js and Git
 
@@ -118,7 +118,7 @@ npm install
 npm run wallet -- generate --out wallets/moj.json
 ```
 
-Copy the `sph1…` **address**.
+Copy the `sph1…` **address**. `generate` prints a checksummed display form and the canonical on-chain 40-hex form. The JSON file stores the canonical address (what the chain uses). Both forms work in `--address`, `--to`, and `--miner-address`.
 
 The file `wallets/moj.json` is your **private key**. Back it up offline. Do not put it in git, Discord, email, or a screenshot. `wallets/` is gitignored on purpose.
 
@@ -144,7 +144,9 @@ Wait ~10 seconds, then in a **second** terminal:
 curl http://127.0.0.1:3001/status
 ```
 
-REST listens on `127.0.0.1` by default. Seeds and explorers pass `--public` (bind `0.0.0.0`). `POST /transactions` is rate-limited.
+REST listens on `127.0.0.1` by default. Seeds and explorers pass `--public` (bind `0.0.0.0`). `POST /transactions` is rate-limited; so are `GET /blocks`, `GET /blocks/:id`, and `GET /transactions/:address`.
+
+CORS is open by default so a locally hosted wallet (any `localhost` port) can talk to the node. Home REST is localhost-only, so that does not publish the API. Operators with a fixed wallet origin set `SPHERE_CORS_ORIGIN` (comma-separated). TLS is not built into the node — put Caddy or nginx + Let's Encrypt in front of a public REST port.
 
 You should see `"name": "Sphere"`. With `--mine`, `"mining"` is `true` and `"height"` rises when this node or a peer finds a block.
 
@@ -242,9 +244,11 @@ Not required. Use this if you want others on the internet to dial **in** (home P
 npm run start -- --port 3001 --p2p-port 6001 --data-dir ~/sphere-data --p2p-url ws://YOUR.PUBLIC.IP:6001 --public
 ```
 
-Add that `ws://…` URL to [`bootstrap-peers.json`](bootstrap-peers.json) if you want new clones to find you without `--peers`.
+Add that `ws://…` URL to [`bootstrap-peers.json`](bootstrap-peers.json) **and** `src/network/seeds.ts` if you want new clones to find you without `--peers`. Extra seeds need real hosts on different providers/regions — do not invent placeholder IPs.
 
-`--no-default-seeds` plus no `--peers` starts a **private fork**, not the public chain.
+`--no-default-seeds` without `--peers` **refuses to start** (it would be a silent private fork). Pass `--peers ws://…` when you really want an isolated network.
+
+HTTPS for public REST: terminate TLS on Caddy or nginx (Let's Encrypt) and reverse-proxy to `127.0.0.1:3001`. The node itself speaks plain HTTP.
 
 The public seed (`57.128.203.234`) must **not** mine (OVH forbids PoW on a VPS). Miners run `--mine` on home PCs. Update that VPS without touching `~/sphere-data`:
 
@@ -272,7 +276,7 @@ Longest valid chain wins; the replacement is fully validated first.
 | `--port` | REST API port (default `3001`) |
 | `--p2p-port` | WebSocket P2P port (default `6001`; TCP is this + 1) |
 | `--peers` | Extra bootstrap peers, comma-separated `ws://host:port` |
-| `--no-default-seeds` | Private node: skip GitHub peer list and public DHT |
+| `--no-default-seeds` | Skip GitHub peer list and public DHT. Refuses to start unless `--peers` is also set |
 | `--p2p-url` | Public `ws://host:port` advertised to others |
 | `--mine` | Mine in a loop (home PCs only; seed sets `SPHERE_DISABLE_MINING=1`) |
 | `--miner-address` | Coinbase recipient (`sph1…`) — required with `--mine` |
@@ -323,6 +327,7 @@ CORS is enabled so the browser wallet can call a local node.
 - Retarget every **144** blocks: `new_target = old × actual / expected`, clamped to ×1.4 / ÷1.4
 - Stall valve: gap **>10×** target spacing (100 min) eases ×1.4 per such window, capped at genesis
 - Mempool: highest fee first, max 500 transactions per block, 1 hour TTL
+- Coinbase maturity: 100 blocks, enforced from height 5328 (history below that is unchanged)
 - P2P: libp2p (WebSocket + TCP, Sphere DHT, mDNS, public DHT, circuit relay + DCUtR). Sync is headers-first (`/sphere/sync/2.0.0`) with a v1 fallback. Reorgs follow cumulative work, not length. RFC1918 addresses are not gossiped. Full block bodies live on disk (`chain.dat`); UTXO snapshots skip a full replay on restart.
 
 ---
@@ -341,7 +346,9 @@ CORS is enabled so the browser wallet can call a local node.
 | `meshReady`: false | Not enough miner-to-miner links yet. Leave the VPS on; NAT peers connect via circuit relay first. |
 | `height` never matches a friend | Different data dirs / old `data/` — stop, delete that dir, start again. Or you used `--no-default-seeds` |
 | Balance is 0 | No coins yet. Mine with the same `sph1` as `--miner-address`, or get a transfer |
-| `curl` / wallet cannot reach `:3001` | Start `npm run start` (step 4) in another terminal, or pass `--node http://HOST:3001` |
+| `git pull` did not change `data/` or `wallets/` | Expected. Those dirs are gitignored. Pull updates **code** only; the chain and keys stay on disk |
+| `curl` / wallet cannot reach `:3001` | Start `npm run start` (step 4) in another terminal, or omit `--node` so the CLI can fall back to the public seed |
+| `--no-default-seeds` exits immediately | Also pass `--peers ws://HOST:6001`, or drop `--no-default-seeds` to use the public seed |
 | Second local node will not start | Port clash: first node uses 6001 **and** 6002. Use `--p2p-port 6101` for the second |
 
 Tests: `npm test` from the repo root.

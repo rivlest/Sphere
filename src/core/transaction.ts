@@ -11,6 +11,28 @@ export interface Utxo {
   vout: number;
   address: string;
   amount: number;
+  /** Block height that created this output. */
+  height: number;
+  /** True when this output is the block reward (coinbase). */
+  coinbase: boolean;
+}
+
+export interface TxValidationContext {
+  spendHeight: number;
+  coinbaseMaturity: number;
+  maturityActivationHeight: number;
+}
+
+export function isCoinbaseMature(
+  utxo: Utxo,
+  spendHeight: number,
+  maturity: number,
+  activationHeight: number,
+): boolean {
+  if (!utxo.coinbase) return true;
+  if (spendHeight < activationHeight) return true;
+  if (!Number.isInteger(utxo.height)) return false;
+  return spendHeight - utxo.height >= maturity;
 }
 
 export function outpointKey(txid: string, vout: number): string {
@@ -43,6 +65,7 @@ export function createCoinbaseTransaction(params: {
   blockIndex: number;
   timestamp: number;
 }): Transaction {
+  assertIntegerOrbs(params.amount, 'coinbase amount');
   const unsigned = {
     inputs: [{ txid: COINBASE_TXID, vout: params.blockIndex, signature: '' }],
     outputs: [{ address: params.to, amount: params.amount }],
@@ -144,6 +167,7 @@ export function validateTransactionStructure(tx: Transaction): void {
 export function validateTransaction(
   tx: Transaction,
   resolve: (txid: string, vout: number) => Utxo | undefined,
+  context?: TxValidationContext,
 ): void {
   validateTransactionStructure(tx);
 
@@ -167,6 +191,19 @@ export function validateTransaction(
     const utxo = resolve(input.txid, input.vout);
     if (!utxo) {
       throw new ValidationError(`Spent or missing UTXO ${key}`);
+    }
+    if (
+      context &&
+      !isCoinbaseMature(
+        utxo,
+        context.spendHeight,
+        context.coinbaseMaturity,
+        context.maturityActivationHeight,
+      )
+    ) {
+      throw new ValidationError(
+        `Immature coinbase ${key}: need ${context.coinbaseMaturity} confirmations`,
+      );
     }
     if (!input.signature) {
       throw new ValidationError('Missing signature');

@@ -2,11 +2,12 @@ import { useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Link } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
+import { encodeDisplayAddress } from '../lib/address';
 import { CopyButton } from './CopyButton';
 
 export function ReceiveView() {
   const { wallet } = useWallet();
-  const address = wallet!.address;
+  const address = encodeDisplayAddress(wallet!.address);
   const [amount, setAmount] = useState('');
 
   const paymentUri = useMemo(() => {

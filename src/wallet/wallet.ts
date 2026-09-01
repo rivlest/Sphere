@@ -26,3 +26,4 @@ export function walletFromPrivateKey(privateKey: string): Wallet {
 }
 
 export { addressFromPrivateKey, addressFromPublicKey, isValidAddress };
+export { encodeDisplayAddress, decodeAddress, decodeLegacyAddress, parseAddress } from './address.js';

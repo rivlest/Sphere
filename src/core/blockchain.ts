@@ -15,10 +15,12 @@ import {
   outpointKey,
   outputSum,
   transactionFee,
+  isCoinbaseTx,
   validateTransaction,
+  type TxValidationContext,
   type Utxo,
 } from './transaction.js';
-import { blockRewardOrbs } from './units.js';
+import { assertOrbsFitSafeInteger, blockRewardOrbs } from './units.js';
 import type { BlockArchive } from '../storage/persistence.js';
 import {
   FileUtxoSnapshotStore,
@@ -57,6 +59,15 @@ export class Blockchain {
 
   private constructor(config: ChainConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config, pow: config.pow ?? DEFAULT_CONFIG.pow };
+    assertOrbsFitSafeInteger(this.config.initialRewardOrbs, this.config.halvingInterval);
+  }
+
+  txValidationContext(spendHeight: number): TxValidationContext {
+    return {
+      spendHeight,
+      coinbaseMaturity: this.config.coinbaseMaturity,
+      maturityActivationHeight: this.config.coinbaseMaturityActivationHeight,
+    };
   }
 
   static async open(config: ChainConfig = DEFAULT_CONFIG, blocks?: Block[]): Promise<Blockchain> {
@@ -239,7 +250,14 @@ export class Blockchain {
     const previous = this.getTransaction(txid);
     const output = previous?.outputs[vout];
     if (!output) return undefined;
-    return { txid, vout, address: output.address, amount: output.amount };
+    return {
+      txid,
+      vout,
+      address: output.address,
+      amount: output.amount,
+      height: this.txIndex.get(txid) ?? 0,
+      coinbase: isCoinbaseTx(previous),
+    };
   }
 
   async resolveOutpointDeep(txid: string, vout: number): Promise<Utxo | undefined> {
@@ -247,8 +265,15 @@ export class Blockchain {
     if (live) return live;
     const found = await this.findTransaction(txid);
     const output = found?.tx.outputs[vout];
-    if (!output) return undefined;
-    return { txid, vout, address: output.address, amount: output.amount };
+    if (!output || !found) return undefined;
+    return {
+      txid,
+      vout,
+      address: output.address,
+      amount: output.amount,
+      height: found.height,
+      coinbase: isCoinbaseTx(found.tx),
+    };
   }
 
   getSupplyStats(): { circulatingOrbs: number; holders: number } {
@@ -450,15 +475,16 @@ export class Blockchain {
     }
 
     const working = cloneUtxos(utxos);
+    const spendContext = this.txValidationContext(block.header.index);
     let fees = 0;
     for (let i = 1; i < block.transactions.length; i++) {
       const tx = block.transactions[i]!;
       if (txIndex.has(tx.hash)) {
         throw new ValidationError(`Duplicate transaction ${tx.hash}`);
       }
-      validateTransaction(tx, (txid, vout) => working.get(outpointKey(txid, vout)));
+      validateTransaction(tx, (txid, vout) => working.get(outpointKey(txid, vout)), spendContext);
       fees += transactionFee(tx, (txid, vout) => working.get(outpointKey(txid, vout)));
-      this.applyUserTransaction(tx, working);
+      this.applyUserTransaction(tx, working, block.header.index);
     }
 
     const coinbase = block.transactions[0]!;
@@ -478,8 +504,9 @@ export class Blockchain {
     validateTransaction(coinbase, () => undefined);
   }
 
-  private applyUserTransaction(tx: Transaction, utxos: UtxoMap): void {
+  private applyUserTransaction(tx: Transaction, utxos: UtxoMap, height: number): void {
     const track = utxos === this.utxos;
+    const coinbase = isCoinbaseTx(tx);
     for (const input of tx.inputs) {
       const key = outpointKey(input.txid, input.vout);
       const spent = utxos.get(key);
@@ -492,6 +519,8 @@ export class Blockchain {
         vout,
         address: output.address,
         amount: output.amount,
+        height,
+        coinbase,
       };
       const key = outpointKey(tx.hash, vout);
       utxos.set(key, utxo);
@@ -500,13 +529,14 @@ export class Blockchain {
   }
 
   private applyBlockToState(block: Block, utxos: UtxoMap, txIndex: Map<string, number>): void {
+    const height = block.header.index;
     for (let i = 1; i < block.transactions.length; i++) {
-      this.applyUserTransaction(block.transactions[i]!, utxos);
-      txIndex.set(block.transactions[i]!.hash, block.header.index);
+      this.applyUserTransaction(block.transactions[i]!, utxos, height);
+      txIndex.set(block.transactions[i]!.hash, height);
     }
     const coinbase = block.transactions[0]!;
-    this.applyUserTransaction(coinbase, utxos);
-    txIndex.set(coinbase.hash, block.header.index);
+    this.applyUserTransaction(coinbase, utxos, height);
+    txIndex.set(coinbase.hash, height);
   }
 
   private async applyValidBlock(

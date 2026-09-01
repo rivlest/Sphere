@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
 import { getBalance, getNodeUrl, getStatus } from '../lib/api';
+import { encodeDisplayAddress } from '../lib/address';
 import { formatOrbsToSph, shortenAddress } from '../lib/units';
 import { ORBS_PER_SPH } from '../types';
 import { CopyButton } from './CopyButton';
@@ -11,6 +12,7 @@ import { TransactionHistory } from './TransactionHistory';
 export function Dashboard() {
   const { wallet } = useWallet();
   const address = wallet!.address;
+  const displayAddress = encodeDisplayAddress(address);
   const [expanded, setExpanded] = useState(false);
   const [balanceOrbs, setBalanceOrbs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,13 +46,13 @@ export function Dashboard() {
         <button
           type="button"
           className="break-all text-left font-mono text-sm"
-          title={address}
+          title={displayAddress}
           onClick={() => setExpanded((v) => !v)}
         >
-          {expanded ? address : shortenAddress(address)}
+          {expanded ? displayAddress : shortenAddress(displayAddress)}
         </button>
         <div className="mt-3 flex flex-wrap gap-2">
-          <CopyButton text={address} label="Kopiuj" />
+          <CopyButton text={displayAddress} label="Kopiuj" />
         </div>
       </div>
 

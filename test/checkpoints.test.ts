@@ -21,4 +21,20 @@ describe('peer score', () => {
     expect(scores.noteInvalid('peer-a')).toBe(true);
     expect(scores.isBanned('peer-a')).toBe(true);
   });
+
+  it('escalates the ban when the same peer offends again within 24h', () => {
+    let now = 1_000_000;
+    const scores = new PeerScore(() => now);
+    for (let i = 0; i < 8; i++) scores.noteInvalid('flood');
+    expect(scores.banDurationMs('flood')).toBe(15 * 60 * 1000);
+
+    now += 15 * 60 * 1000 + 1;
+    expect(scores.isBanned('flood')).toBe(false);
+    for (let i = 0; i < 8; i++) scores.noteInvalid('flood');
+    expect(scores.banDurationMs('flood')).toBe(4 * 60 * 60 * 1000);
+
+    now += 4 * 60 * 60 * 1000 + 1;
+    for (let i = 0; i < 8; i++) scores.noteInvalid('flood');
+    expect(scores.banDurationMs('flood')).toBe(24 * 60 * 60 * 1000);
+  });
 });

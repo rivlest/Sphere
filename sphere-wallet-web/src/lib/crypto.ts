@@ -3,6 +3,7 @@ import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import { ADDRESS_PREFIX, type Transaction, type UnsignedTransaction, type Utxo, type WalletSession } from '../types';
+import { parseAddress } from './address';
 
 secp.etc.hmacSha256Sync = (key, ...msgs) => hmac(sha256, key, secp.etc.concatBytes(...msgs));
 
@@ -56,11 +57,20 @@ export function addressFromPrivateKey(privateKeyHex: string): string {
 }
 
 export function isValidAddress(address: string): boolean {
-  return new RegExp(`^${ADDRESS_PREFIX}[0-9a-f]{40}$`).test(address.trim().toLowerCase());
+  try {
+    parseAddress(address);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeAddress(address: string): string {
-  return address.trim().toLowerCase();
+  try {
+    return parseAddress(address).canonical;
+  } catch {
+    return address.trim();
+  }
 }
 
 export function createWallet(): WalletSession {
@@ -115,12 +125,14 @@ export function createSignedTransaction(
   if (params.amount <= 0) {
     throw new Error('Transaction amount must be greater than 0');
   }
+  const to = parseAddress(params.to).canonical;
+  const changeAddress = parseAddress(params.changeAddress).canonical;
   const selected = selectCoins(params.utxos, params.amount + params.fee);
   const totalIn = selected.reduce((sum, utxo) => sum + utxo.amount, 0);
   const change = totalIn - params.amount - params.fee;
-  const outputs = [{ address: params.to, amount: params.amount }];
+  const outputs = [{ address: to, amount: params.amount }];
   if (change > 0) {
-    outputs.push({ address: params.changeAddress, amount: change });
+    outputs.push({ address: changeAddress, amount: change });
   }
   const unsigned: UnsignedTransaction = {
     inputs: selected.map((utxo) => ({ txid: utxo.txid, vout: utxo.vout, signature: '' })),

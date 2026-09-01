@@ -1,4 +1,5 @@
 import { isValidAddress, normalizeAddress } from './crypto';
+import { parseAddress } from './address';
 import { parseSphToOrbs } from './units';
 
 export type SendFieldError = 'required' | 'invalid_address' | 'invalid_amount' | 'not_positive' | 'exceeds_balance';
@@ -19,6 +20,7 @@ export interface SendValidationResult {
   selfTransfer: boolean;
   amountOrbs: number;
   feeOrbs: number;
+  canonicalTo: string;
 }
 
 export function validateSendForm(input: SendFormInput): SendValidationResult {
@@ -27,9 +29,16 @@ export function validateSendForm(input: SendFormInput): SendValidationResult {
     selfTransfer: false,
     amountOrbs: 0,
     feeOrbs: 0,
+    canonicalTo: '',
   };
 
-  const to = normalizeAddress(input.to);
+  try {
+    result.canonicalTo = parseAddress(input.to).canonical;
+  } catch {
+    result.canonicalTo = '';
+  }
+
+  const to = result.canonicalTo || normalizeAddress(input.to);
   if (!input.to.trim()) {
     result.to = 'required';
   } else if (!isValidAddress(to)) {
@@ -62,7 +71,7 @@ export function validateSendForm(input: SendFormInput): SendValidationResult {
 
 export const SEND_ERROR_COPY: Record<SendFieldError, string> = {
   required: 'To pole jest wymagane',
-  invalid_address: 'Adres musi mieć prefix sph1 i 40 znaków hex',
+  invalid_address: 'Adres sph1 z checksumem (albo legacy 40 hex)',
   invalid_amount: 'Podaj kwotę SPH (maks. 8 miejsc po przecinku)',
   not_positive: 'Kwota musi być większa od zera',
   exceeds_balance: 'Kwota z opłatą przekracza saldo',

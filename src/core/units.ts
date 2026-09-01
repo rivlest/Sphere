@@ -47,3 +47,19 @@ export function maxSupplyOrbs(initialRewardOrbs: number, halvingInterval: number
   }
   return total;
 }
+
+/**
+ * Fail fast if a future economics change would silently overflow IEEE numbers.
+ * Current cap (~2.1e15 Orbs) sits ~4.29× below Number.MAX_SAFE_INTEGER (9.007e15).
+ */
+export function assertOrbsFitSafeInteger(
+  initialRewardOrbs: number,
+  halvingInterval: number,
+): void {
+  const cap = maxSupplyOrbs(initialRewardOrbs, halvingInterval);
+  if (!Number.isSafeInteger(cap)) {
+    throw new Error(
+      `Supply cap ${cap} Orbs does not fit in Number.MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER})`,
+    );
+  }
+}

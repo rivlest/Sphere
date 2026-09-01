@@ -2,11 +2,11 @@ import { Command } from 'commander';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createWallet, walletFromPrivateKey, type Wallet } from '../wallet/wallet.js';
-import { isValidAddress } from '../wallet/keys.js';
+import { encodeDisplayAddress, parseAddress } from '../wallet/address.js';
 import { createSignedTransaction } from '../core/transaction.js';
 import { parseSphToOrbs, formatOrbsToSph } from '../core/units.js';
 import { LOCAL_REST } from '../network/seeds.js';
-import { resolveRestUrl, restUrlWasExplicit } from '../wallet/rest.js';
+import { nodeUnreachableMessage, resolveRestUrl, restUrlWasExplicit } from '../wallet/rest.js';
 
 const program = new Command();
 program.name('wallet-cli').description('Sphere wallet utilities');
@@ -19,10 +19,11 @@ program
     const wallet = createWallet();
     await mkdir(path.dirname(path.resolve(cmd.out)), { recursive: true });
     await writeFile(cmd.out, `${JSON.stringify(wallet, null, 2)}\n`, 'utf8');
-    console.log(`Address:     ${wallet.address}`);
+    console.log(`Address:     ${encodeDisplayAddress(wallet.address)}`);
+    console.log(`Canonical:   ${wallet.address}`);
     console.log(`Public key:  ${wallet.publicKey}`);
     console.log(`Saved to:    ${path.resolve(cmd.out)}`);
-    console.log('Keep the private key secret.');
+    console.log('Keep the private key secret. JSON stores the canonical on-chain address.');
   });
 
 program
@@ -32,14 +33,19 @@ program
   .option('--address <address>', 'Sphere address')
   .option('--node <url>', 'node REST base URL', LOCAL_REST)
   .action(async (cmd: { wallet?: string; address?: string; node: string }) => {
-    const address = cmd.address ?? (await loadWallet(required(cmd.wallet, '--wallet'))).address;
-    if (!isValidAddress(address)) {
-      throw new Error('Invalid address');
+    const parsed = parseAddress(
+      cmd.address ?? (await loadWallet(required(cmd.wallet, '--wallet'))).address,
+    );
+    if (parsed.encoding === 'legacy') {
+      console.error(
+        `legacy decode: ${parsed.canonical} → ${encodeDisplayAddress(parsed.canonical)}`,
+      );
     }
     const base = await resolveRestUrl(cmd.node, restUrlWasExplicit());
-    const body = await requestJson(`${base}/balance/${address}`);
+    const body = await requestJson(`${base}/balance/${parsed.canonical}`);
     console.log(`Node:       ${base}`);
-    console.log(`Address:    ${body.address}`);
+    console.log(`Address:    ${encodeDisplayAddress(parsed.canonical)}`);
+    console.log(`Canonical:  ${parsed.canonical}`);
     console.log(`Balance:    ${body.balanceSph} SPH (${body.balance} Orbs)`);
     const utxos = Array.isArray(body.utxos) ? body.utxos.length : 0;
     console.log(`UTXOs:      ${utxos}`);
@@ -56,8 +62,9 @@ program
   .action(
     async (cmd: { wallet: string; to: string; amount: string; fee: string; node: string }) => {
       const wallet = await loadWallet(cmd.wallet);
-      if (!isValidAddress(cmd.to)) {
-        throw new Error('Invalid recipient address');
+      const to = parseAddress(cmd.to);
+      if (to.encoding === 'legacy') {
+        console.error(`legacy decode: ${to.canonical} → ${encodeDisplayAddress(to.canonical)}`);
       }
       const amount = parseSphToOrbs(cmd.amount);
       const fee = parseSphToOrbs(cmd.fee);
@@ -68,11 +75,13 @@ program
         vout: number;
         address: string;
         amount: number;
+        height: number;
+        coinbase: boolean;
       }>;
       const tx = createSignedTransaction(
         {
           utxos,
-          to: cmd.to,
+          to: to.canonical,
           amount,
           fee,
           changeAddress: wallet.address,
@@ -111,7 +120,8 @@ async function requestJson(url: string, init?: RequestInit): Promise<Record<stri
   try {
     response = await fetch(url, init);
   } catch {
-    throw new Error(`Cannot reach ${url}`);
+    const origin = new URL(url).origin;
+    throw new Error(nodeUnreachableMessage(origin));
   }
   const body = (await response.json()) as Record<string, unknown>;
   if (!response.ok) {

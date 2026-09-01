@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 import { SphereNode } from '../node.js';
 import { isValidAddress } from '../wallet/keys.js';
+import { parseAddress } from '../wallet/address.js';
+import { assertWillJoinNetwork } from './networkGuard.js';
 
 const program = new Command();
 
@@ -37,6 +39,13 @@ const peers = opts.peers
   .map((url) => url.trim())
   .filter(Boolean);
 
+try {
+  assertWillJoinNetwork(opts.defaultSeeds !== false, peers);
+} catch (error) {
+  console.error(`Error: ${error instanceof Error ? error.message : error}`);
+  process.exit(1);
+}
+
 if (process.env.SPHERE_DISABLE_MINING === '1' && opts.mine) {
   console.error(
     'Error: SPHERE_DISABLE_MINING=1 (seed/VPS). Mine on a home PC, not this host.',
@@ -44,7 +53,17 @@ if (process.env.SPHERE_DISABLE_MINING === '1' && opts.mine) {
   process.exit(1);
 }
 
-if (opts.mine && (!opts.minerAddress || !isValidAddress(opts.minerAddress))) {
+let minerAddress = opts.minerAddress;
+if (minerAddress) {
+  try {
+    minerAddress = parseAddress(minerAddress).canonical;
+  } catch {
+    console.error('Error: --miner-address must be a sph1 address (checksum or legacy 40-hex)');
+    process.exit(1);
+  }
+}
+
+if (opts.mine && (!minerAddress || !isValidAddress(minerAddress))) {
   console.error('Error: --mine requires a valid --miner-address (sph1…)');
   process.exit(1);
 }
@@ -58,7 +77,7 @@ const node = new SphereNode({
   rpcBind: opts.public ? '0.0.0.0' : opts.rpcBind,
   useDefaultSeeds: opts.defaultSeeds !== false,
   mine: Boolean(opts.mine),
-  minerAddress: opts.minerAddress,
+  minerAddress,
   dataDir: opts.dataDir,
 });
 

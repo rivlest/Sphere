@@ -11,7 +11,7 @@ import { isValidAddress } from '../src/wallet/keys.js';
 import { ValidationError } from '../src/core/errors.js';
 
 function utxoFor(address: string, amount: number): Utxo {
-  return { txid: 'ab'.repeat(32), vout: 0, address, amount };
+  return { txid: 'ab'.repeat(32), vout: 0, address, amount, height: 0, coinbase: false };
 }
 
 function resolve(utxo: Utxo) {

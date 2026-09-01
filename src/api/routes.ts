@@ -2,13 +2,13 @@ import type { Express, Response } from 'express';
 import { Router } from 'express';
 import { ValidationError } from '../core/errors.js';
 import type { SphereNode } from '../node.js';
-import { isValidAddress } from '../wallet/keys.js';
+import { parseAddress } from '../wallet/address.js';
 import { formatOrbsToSph } from '../core/units.js';
 import { NETWORK_NAME, TICKER, type Transaction } from '../types.js';
 import { summarizeTransaction, transactionTouchesAddress, type Utxo } from '../core/transaction.js';
 import { buildMarketSnapshot } from './marketSnapshot.js';
 import { marketPrice } from './marketPrice.js';
-import { rateLimit } from './rateLimit.js';
+import { rateLimit, REST_LIMITS } from './rateLimit.js';
 
 export function createRoutes(node: SphereNode): Router {
   const router = Router();
@@ -32,7 +32,7 @@ export function createRoutes(node: SphereNode): Router {
     });
   });
 
-  router.get('/blocks', async (req, res) => {
+  router.get('/blocks', rateLimit(REST_LIMITS.chainRead), async (req, res) => {
     const from = parseInteger(req.query.from, 0);
     const limit = Math.min(parseInteger(req.query.limit, 20), 100);
     const blocks = await node.blockchain.getBlocksRange(from, limit);
@@ -43,7 +43,7 @@ export function createRoutes(node: SphereNode): Router {
     });
   });
 
-  router.get('/blocks/:hashOrHeight', async (req, res) => {
+  router.get('/blocks/:hashOrHeight', rateLimit(REST_LIMITS.chainRead), async (req, res) => {
     const { hashOrHeight } = req.params;
     const block =
       /^\d+$/.test(hashOrHeight) && hashOrHeight.length < 12
@@ -57,11 +57,8 @@ export function createRoutes(node: SphereNode): Router {
   });
 
   router.get('/balance/:address', (req, res) => {
-    const { address } = req.params;
-    if (!isValidAddress(address)) {
-      res.status(400).json({ error: 'Invalid address' });
-      return;
-    }
+    const address = parseRouteAddress(req.params.address, res);
+    if (!address) return;
     const spendable = node.spendableUtxos(address);
     const confirmed = node.blockchain.getAccount(address).balance;
     const spendableBalance = spendable.reduce((sum, utxo) => sum + utxo.amount, 0);
@@ -75,11 +72,8 @@ export function createRoutes(node: SphereNode): Router {
   });
 
   router.get('/utxos/:address', (req, res) => {
-    const { address } = req.params;
-    if (!isValidAddress(address)) {
-      res.status(400).json({ error: 'Invalid address' });
-      return;
-    }
+    const address = parseRouteAddress(req.params.address, res);
+    if (!address) return;
     res.json({ address, utxos: node.spendableUtxos(address) });
   });
 
@@ -95,12 +89,9 @@ export function createRoutes(node: SphereNode): Router {
     res.json(await buildMarketSnapshot(node));
   });
 
-  router.get('/transactions/:address', async (req, res) => {
-    const { address } = req.params;
-    if (!isValidAddress(address)) {
-      res.status(400).json({ error: 'Invalid address' });
-      return;
-    }
+  router.get('/transactions/:address', rateLimit(REST_LIMITS.addressHistory), async (req, res) => {
+    const address = parseRouteAddress(req.params.address, res);
+    if (!address) return;
     const limit = Math.min(parseInteger(req.query.limit, 50), 200);
     const resolve = (txid: string, vout: number) => node.blockchain.resolveOutpoint(txid, vout);
     const confirmed = [];
@@ -139,7 +130,7 @@ export function createRoutes(node: SphereNode): Router {
 
   router.post(
     '/transactions',
-    rateLimit({ windowMs: 60_000, max: 12 }),
+    rateLimit(REST_LIMITS.txBroadcast),
     (req, res) => {
     try {
       const tx = node.submitTransaction(req.body);
@@ -149,10 +140,15 @@ export function createRoutes(node: SphereNode): Router {
     }
   });
 
-  router.post('/faucet', (req, res) => {
+  router.post('/faucet', rateLimit(REST_LIMITS.faucet), (req, res) => {
     try {
       const address = req.body?.address;
-      const amount = Number(req.body?.amountOrbs ?? 100_000_000);
+      const rawAmount = req.body?.amountOrbs;
+      const amount = rawAmount === undefined ? 100_000_000 : Number(rawAmount);
+      if (!Number.isInteger(amount)) {
+        res.status(400).json({ error: 'amountOrbs must be an integer of Orbs' });
+        return;
+      }
       const tx = node.dripFaucet(address, amount);
       res.status(201).json({ accepted: true, hash: tx.hash });
     } catch (error) {
@@ -164,7 +160,7 @@ export function createRoutes(node: SphereNode): Router {
     res.json({ peers: node.getKnownPeers() });
   });
 
-  router.post('/peers', async (req, res) => {
+  router.post('/peers', rateLimit(REST_LIMITS.peers), async (req, res) => {
     try {
       const address = req.body?.address;
       if (typeof address !== 'string' || !address.startsWith('ws')) {
@@ -183,6 +179,19 @@ export function createRoutes(node: SphereNode): Router {
 
 export function mountRoutes(app: Express, node: SphereNode): void {
   app.use(createRoutes(node));
+}
+
+function parseRouteAddress(raw: string | undefined, res: Response): string | null {
+  if (!raw) {
+    res.status(400).json({ error: 'Invalid address' });
+    return null;
+  }
+  try {
+    return parseAddress(raw).canonical;
+  } catch {
+    res.status(400).json({ error: 'Invalid address' });
+    return null;
+  }
 }
 
 function decorateTx(tx: Transaction, resolve: (txid: string, vout: number) => Utxo | undefined) {

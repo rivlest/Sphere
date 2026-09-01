@@ -4,6 +4,7 @@ import { useWallet } from '../context/WalletContext';
 import { createWallet } from '../lib/crypto';
 import { encryptKeystore } from '../lib/keystore';
 import type { WalletSession } from '../types';
+import { encodeDisplayAddress } from '../lib/address';
 import { CopyButton } from './CopyButton';
 
 export function WalletCreate() {
@@ -57,8 +58,9 @@ export function WalletCreate() {
           <Warning />
           <div className="card space-y-3">
             <p className="label">Adres</p>
-            <p className="break-all font-mono text-sm">{session.address}</p>
-            <CopyButton text={session.address} label="Kopiuj adres" />
+            <p className="break-all font-mono text-sm">{encodeDisplayAddress(session.address)}</p>
+            <CopyButton text={encodeDisplayAddress(session.address)} label="Kopiuj adres" />
+            <p className="text-xs text-mute">On-chain: {session.address}</p>
           </div>
           <div className="card space-y-3">
             <div className="flex items-center justify-between">

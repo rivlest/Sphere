@@ -5,6 +5,7 @@ import {
   hashTransaction,
   isValidAddress,
 } from '../src/lib/crypto';
+import { decodeAddress, encodeDisplayAddress, parseAddress } from '../src/lib/address';
 
 describe('Sphere address derivation', () => {
   it('creates sph1 addresses of length 44', () => {
@@ -13,6 +14,10 @@ describe('Sphere address derivation', () => {
     expect(wallet.address.startsWith('sph1')).toBe(true);
     expect(wallet.address).toHaveLength(44);
     expect(wallet.privateKey).toHaveLength(64);
+    const display = encodeDisplayAddress(wallet.address);
+    expect(decodeAddress(display)).toBe(wallet.address);
+    expect(parseAddress(display).encoding).toBe('checksum');
+    expect(isValidAddress(display)).toBe(true);
   });
 });
 

@@ -18,8 +18,8 @@ describe('WalletCreate', () => {
 
     await user.click(screen.getByRole('button', { name: 'Stwórz nowy portfel' }));
 
-    const address = await screen.findByText(/^sph1[0-9a-f]{40}$/);
-    expect(address).toBeInTheDocument();
+    expect(await screen.findByText(/^sph1[1-9A-HJ-NP-Za-km-z]+$/)).toBeInTheDocument();
+    expect(screen.getByText(/On-chain:/)).toHaveTextContent(/sph1[0-9a-f]{40}/);
     expect(screen.getByText(/Zapisz klucz prywatny/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Kopiuj klucz prywatny' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Pobierz jako zaszyfrowany keystore' })).toBeInTheDocument();

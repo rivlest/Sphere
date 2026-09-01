@@ -73,6 +73,12 @@ function isUtxoSnapshot(value: unknown): value is UtxoSnapshot {
     Array.isArray(snap.headers) &&
     Array.isArray(snap.utxos) &&
     Array.isArray(snap.txIndex) &&
-    Array.isArray(snap.addressIndex)
+    Array.isArray(snap.addressIndex) &&
+    snap.utxos.every(
+      (utxo) =>
+        Number.isInteger(utxo.amount) &&
+        Number.isInteger(utxo.height) &&
+        typeof utxo.coinbase === 'boolean',
+    )
   );
 }

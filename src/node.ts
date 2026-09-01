@@ -6,8 +6,9 @@ import { createCandidateBlock } from './core/block.js';
 import { mineBlockParallel } from './core/minePool.js';
 import { mineBlock } from './core/proofOfWork.js';
 import { ValidationError } from './core/errors.js';
-import { isCoinbaseTx, outpointKey, validateTransactionStructure, type Utxo } from './core/transaction.js';
+import { isCoinbaseMature, isCoinbaseTx, outpointKey, validateTransactionStructure, type Utxo } from './core/transaction.js';
 import { isValidAddress } from './wallet/keys.js';
+import { parseAddress } from './wallet/address.js';
 import { Mempool } from './mempool/mempool.js';
 import { BinaryChainStore, type ChainStore } from './storage/persistence.js';
 import { FileUtxoSnapshotStore } from './storage/utxoSnapshot.js';
@@ -81,7 +82,9 @@ export class SphereNode {
     };
     this.store = options.store ?? new BinaryChainStore(options.dataDir);
     this.mempool = new Mempool(this.config.mempoolTtlMs);
-    this.minerAddress = options.minerAddress;
+    this.minerAddress = options.minerAddress
+      ? parseAddress(options.minerAddress).canonical
+      : undefined;
     this.dataDir = options.dataDir;
     this.shouldMine = Boolean(options.mine);
     const extra = options.peers ?? [];
@@ -206,6 +209,7 @@ export class SphereNode {
       tx,
       (txid, vout) => this.blockchain.getUtxo(txid, vout),
       (hash) => this.blockchain.hasTransaction(hash),
+      this.mempoolContext(),
     );
     this.p2p.broadcast({ type: 'NEW_TRANSACTION', data: tx });
     this.interruptMining();
@@ -467,6 +471,7 @@ export class SphereNode {
         tx,
         (txid, vout) => this.blockchain.getUtxo(txid, vout),
         (hash) => this.blockchain.hasTransaction(hash),
+        this.mempoolContext(),
       );
       this.p2p.broadcast({ type: 'NEW_TRANSACTION', data: tx }, from);
       this.interruptMining();
@@ -618,6 +623,7 @@ export class SphereNode {
     const userTxs = this.mempool.selectForBlock(
       this.config.maxTransactionsPerBlock - 1,
       (txid, vout) => this.blockchain.getUtxo(txid, vout),
+      this.mempoolContext(),
     );
     return createCandidateBlock(this.blockchain, this.minerAddress!, userTxs);
   }
@@ -644,9 +650,21 @@ export class SphereNode {
 
   spendableUtxos(address: string): Utxo[] {
     const reserved = this.mempool.reservedOutpoints();
-    return this.blockchain
-      .getUtxos(address)
-      .filter((utxo) => !reserved.has(outpointKey(utxo.txid, utxo.vout)));
+    const spendHeight = this.blockchain.height + 1;
+    const { coinbaseMaturity, coinbaseMaturityActivationHeight } = this.config;
+    return this.blockchain.getUtxos(address).filter((utxo) => {
+      if (reserved.has(outpointKey(utxo.txid, utxo.vout))) return false;
+      return isCoinbaseMature(
+        utxo,
+        spendHeight,
+        coinbaseMaturity,
+        coinbaseMaturityActivationHeight,
+      );
+    });
+  }
+
+  private mempoolContext() {
+    return this.blockchain.txValidationContext(this.blockchain.height + 1);
   }
 
   private withChain<T>(fn: () => Promise<T>): Promise<T> {

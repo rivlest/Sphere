@@ -1,5 +1,13 @@
 import type { NextFunction, Request, Response } from 'express';
 
+export const REST_LIMITS = {
+  txBroadcast: { windowMs: 60_000, max: 12 },
+  chainRead: { windowMs: 60_000, max: 60 },
+  addressHistory: { windowMs: 60_000, max: 20 },
+  faucet: { windowMs: 60_000, max: 10 },
+  peers: { windowMs: 60_000, max: 20 },
+} as const;
+
 export function rateLimit(options: { windowMs: number; max: number }) {
   const hits = new Map<string, number[]>();
   return (req: Request, res: Response, next: NextFunction): void => {

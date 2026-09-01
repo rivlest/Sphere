@@ -82,6 +82,16 @@ export interface ChainConfig {
   halvingInterval: number;
   genesisTimestamp: number;
   maxFutureBlockSkewMs: number;
+  /**
+   * Coinbase outputs cannot be spent until this many blocks later.
+   * Target block time is 10 minutes, so 100 ≈ 16.7 h — same wall-clock margin as Bitcoin.
+   */
+  coinbaseMaturity: number;
+  /**
+   * First block height that enforces coinbase maturity.
+   * History below this was accepted without the rule and stays valid.
+   */
+  coinbaseMaturityActivationHeight: number;
   pow: PowParams;
 }
 
@@ -98,6 +108,9 @@ export const DEFAULT_CONFIG: ChainConfig = {
   // 2026-08-25T00:00:00.000Z — UTXO + nBits + Argon2id genesis.
   genesisTimestamp: 1_787_616_000_000,
   maxFutureBlockSkewMs: 2 * 60 * 1000,
+  coinbaseMaturity: 100,
+  // Live mainnet tip was 5327 when this rule shipped. Do not apply it to 0–5327.
+  coinbaseMaturityActivationHeight: 5328,
   pow: DEFAULT_POW,
 };
 

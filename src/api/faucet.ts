@@ -1,6 +1,7 @@
 import { ORBS_PER_SPH } from '../types.js';
 import { ValidationError } from '../core/errors.js';
 import { isValidAddress, addressFromPrivateKey } from '../wallet/keys.js';
+import { parseAddress } from '../wallet/address.js';
 import { createSignedTransaction, type Utxo } from '../core/transaction.js';
 import type { Transaction } from '../types.js';
 
@@ -27,7 +28,13 @@ export class TestFaucet {
   }
 
   drip(to: string, amountOrbs: number, utxos: Utxo[]): Transaction {
-    if (!isValidAddress(to)) {
+    let canonical: string;
+    try {
+      canonical = parseAddress(to).canonical;
+    } catch {
+      throw new ValidationError('Invalid recipient address');
+    }
+    if (!isValidAddress(canonical)) {
       throw new ValidationError('Invalid recipient address');
     }
     if (!Number.isInteger(amountOrbs) || amountOrbs <= 0) {
@@ -38,7 +45,7 @@ export class TestFaucet {
     }
 
     const day = new Date().toISOString().slice(0, 10);
-    const prior = this.spent.get(to);
+    const prior = this.spent.get(canonical);
     const used = prior && prior.day === day ? prior.orbs : 0;
     if (used + amountOrbs > this.maxOrbs) {
       throw new ValidationError('Faucet daily limit reached for this address');
@@ -52,14 +59,14 @@ export class TestFaucet {
     const tx = createSignedTransaction(
       {
         utxos,
-        to,
+        to: canonical,
         amount: amountOrbs,
         fee: 0,
         changeAddress: this.from,
       },
       this.privateKey,
     );
-    this.spent.set(to, { day, orbs: used + amountOrbs });
+    this.spent.set(canonical, { day, orbs: used + amountOrbs });
     return tx;
   }
 }

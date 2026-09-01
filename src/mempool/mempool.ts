@@ -5,6 +5,7 @@ import {
   outpointKey,
   transactionFee,
   validateTransaction,
+  type TxValidationContext,
   type Utxo,
 } from '../core/transaction.js';
 
@@ -47,6 +48,7 @@ export class Mempool {
     tx: Transaction,
     resolve: (txid: string, vout: number) => Utxo | undefined,
     alreadyInChain: (hash: string) => boolean,
+    context?: TxValidationContext,
   ): void {
     this.pruneExpired();
     if (isCoinbaseTx(tx)) {
@@ -64,7 +66,7 @@ export class Mempool {
       }
     }
 
-    validateTransaction(tx, resolve);
+    validateTransaction(tx, resolve, context);
     this.entries.set(tx.hash, { tx, addedAt: Date.now() });
   }
 
@@ -85,6 +87,7 @@ export class Mempool {
   selectForBlock(
     limit: number,
     resolve: (txid: string, vout: number) => Utxo | undefined,
+    context?: TxValidationContext,
   ): Transaction[] {
     this.pruneExpired();
     const remaining = [...this.entries.values()].map((entry) => entry.tx);
@@ -103,7 +106,7 @@ export class Mempool {
         continue;
       }
       try {
-        validateTransaction(tx, resolve);
+        validateTransaction(tx, resolve, context);
       } catch {
         continue;
       }
@@ -119,11 +122,12 @@ export class Mempool {
     txs: Transaction[],
     resolve: (txid: string, vout: number) => Utxo | undefined,
     alreadyInChain: (hash: string) => boolean,
+    context?: TxValidationContext,
   ): void {
     for (const tx of txs) {
       if (isCoinbaseTx(tx) || this.entries.has(tx.hash) || alreadyInChain(tx.hash)) continue;
       try {
-        this.add(tx, resolve, alreadyInChain);
+        this.add(tx, resolve, alreadyInChain, context);
       } catch {
         // Drop transactions that are no longer valid against the new tip.
       }

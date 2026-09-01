@@ -6,7 +6,14 @@ import { ORBS_PER_SPH } from '../src/types.js';
 import type { Utxo } from '../src/core/transaction.js';
 
 function faucetUtxo(address: string): Utxo {
-  return { txid: 'cd'.repeat(32), vout: 0, address, amount: 50 * ORBS_PER_SPH };
+  return {
+    txid: 'cd'.repeat(32),
+    vout: 0,
+    address,
+    amount: 50 * ORBS_PER_SPH,
+    height: 0,
+    coinbase: false,
+  };
 }
 
 describe('optional test faucet', () => {

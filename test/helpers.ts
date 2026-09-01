@@ -12,6 +12,8 @@ import { SphereNode } from '../src/node.js';
 export const TEST_CONFIG: ChainConfig = {
   ...DEFAULT_CONFIG,
   retargetInterval: 4,
+  coinbaseMaturity: 1,
+  coinbaseMaturityActivationHeight: 0,
 };
 
 export async function mineEmptyBlock(
