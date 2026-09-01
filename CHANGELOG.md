@@ -10,6 +10,7 @@ Format: **x.y.z** internally — bump **y** for a public node/wallet release, **
 
 - Warn when GitHub `master` is newer: node log, `GET /status` (`outdated`), wallet CLI, web wallet. Update with `git pull`.
 - `GET /status` `version` is `Sphere core x.y` (not a bare semver string).
+- `npm run status` prints `/status` from localhost or the public seed (works in Windows PowerShell without `curl`).
 
 ## 1.2.0 — 2026-09-01
 

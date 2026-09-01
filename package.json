@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "tsx src/cli/node.ts",
+    "status": "tsx src/cli/status.ts",
     "wallet": "tsx src/cli/wallet-cli.ts",
     "migrate-chain": "tsx src/cli/migrate-chain.ts",
     "bench:pow": "tsx scripts/bench-pow.ts",

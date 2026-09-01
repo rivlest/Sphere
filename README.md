@@ -21,13 +21,26 @@ This is **not** Bitcoin, Ethereum, or a hosted wallet. There is no installer, no
 
 ## Is the network up?
 
-Start a node, then:
+You do **not** need a local node to check the public chain. From the Sphere folder:
 
-```bash
-curl http://127.0.0.1:3001/status
+```powershell
+npm run status
 ```
 
-You should see JSON with `"name": "Sphere"`, `"version": "Sphere core x.y"` (software release, see [CHANGELOG.md](CHANGELOG.md)), a `height`, `bits`, and `latestHash`. Rising `height` means blocks are being found. Seed and miners should show the **same** `version` after an update. If `"outdated": true`, run `git pull` and restart the node.
+That hits `http://127.0.0.1:3001` if your node is running, otherwise the public seed. You should see JSON with `"name": "Sphere"`, `"version": "Sphere core x.y"` (software release, see [CHANGELOG.md](CHANGELOG.md)), a `height`, `bits`, and `latestHash`. Rising `height` means blocks are being found. Seed and miners should show the **same** `version` after an update. If `"outdated": true`, run `git pull` and restart the node.
+
+On **Windows PowerShell**, `curl` is an alias for `Invoke-WebRequest` — it is not curl and will error. Use `npm run status`, or `curl.exe`:
+
+```powershell
+curl.exe http://57.128.203.234:3001/status
+Invoke-RestMethod http://57.128.203.234:3001/status
+```
+
+macOS / Linux / Git Bash:
+
+```bash
+curl http://57.128.203.234:3001/status
+```
 
 The public seed `ws://57.128.203.234:6001` is the bootstrap **and circuit relay** so miners behind NAT form a mesh. Check `"meshReady"`:
 
@@ -59,6 +72,7 @@ Do **1 > 2 > 3 > 4** once (install, clone, wallet, node). Then pick from the tab
 
 | I want to… | What to run |
 | --- | --- |
+| Check if the network / my node is up | `npm run status` (or `curl.exe http://57.128.203.234:3001/status`) |
 | See my balance / open the web wallet | Step 4, then step 5 (or the web wallet) |
 | Send SPH | Step 4, then step 6 |
 | Earn 50 SPH block rewards | Step 4 with `--mine --miner-address sph1…` |
@@ -138,7 +152,19 @@ Mine (rewards go to this address when **this** computer finds a block; ~10 min t
 npm run start -- --port 3001 --p2p-port 6001 --mine --miner-address sph1PASTE_YOUR_ADDRESS
 ```
 
-Wait ~10 seconds, then in a **second** terminal:
+Wait ~10 seconds, then in a **second** terminal (from the Sphere folder):
+
+```powershell
+npm run status
+```
+
+Windows PowerShell (real curl, not the `curl` alias):
+
+```powershell
+curl.exe http://127.0.0.1:3001/status
+```
+
+macOS / Linux / Git Bash:
 
 ```bash
 curl http://127.0.0.1:3001/status
@@ -340,14 +366,14 @@ CORS is enabled so the browser wallet can call a local node.
 | `Permission denied` creating `Sphere` | You are in `C:\WINDOWS\system32`. Run `cd $env:USERPROFILE\Desktop` first |
 | `destination path 'Sphere' already exists` | Do not clone again. `cd $env:USERPROFILE\Desktop\Sphere` |
 | `npm install` fails on `argon2` | 64-bit OS? Node 20+? Then install C build tools (Windows: “Desktop development with C++”) and retry |
-| `curl` to `:3001` fails | Wait 10s after start; check the node window for errors; is another app using 3001? |
+| `curl` to `:3001` fails | On Windows PowerShell use `curl.exe` or `npm run status` (`curl` is not curl). Wait 10s after `npm run start`; check the node window. Nothing is listening until step 4. |
 | `peers`: 0 | Wait; default seed is `ws://57.128.203.234:6001`. Same LAN uses mDNS. After one connect, see `data/peers.json` |
 | `Could not connect` / `192.168…` | Old node gossiped LAN IPs. `git pull` + restart miners **and** the VPS (`update-public-seed.sh`). |
 | `meshReady`: false | Not enough miner-to-miner links yet. Leave the VPS on; NAT peers connect via circuit relay first. |
 | `height` never matches a friend | Different data dirs / old `data/` — stop, delete that dir, start again. Or you used `--no-default-seeds` |
 | Balance is 0 | No coins yet. Mine with the same `sph1` as `--miner-address`, or get a transfer |
 | `git pull` did not change `data/` or `wallets/` | Expected. Those dirs are gitignored. Pull updates **code** only; the chain and keys stay on disk |
-| `curl` / wallet cannot reach `:3001` | Start `npm run start` (step 4) in another terminal, or omit `--node` so the CLI can fall back to the public seed |
+| `curl` / wallet cannot reach `:3001` | Start `npm run start` (step 4) in another terminal, or run `npm run status` / omit `--node` so the CLI can fall back to the public seed |
 | `--no-default-seeds` exits immediately | Also pass `--peers ws://HOST:6001`, or drop `--no-default-seeds` to use the public seed |
 | Second local node will not start | Port clash: first node uses 6001 **and** 6002. Use `--p2p-port 6101` for the second |
 
