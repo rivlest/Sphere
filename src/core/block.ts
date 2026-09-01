@@ -21,10 +21,11 @@ export async function createCandidateBlock(
   chain: ChainTip,
   minerAddress: string,
   userTransactions: Transaction[],
+  atTimestamp?: number,
 ): Promise<Block> {
   const previous = chain.latestBlock;
   const index = previous.header.index + 1;
-  const timestamp = Math.max(Date.now(), previous.header.timestamp + 1);
+  const timestamp = Math.max(atTimestamp ?? Date.now(), previous.header.timestamp + 1);
   const fees = userTransactions.reduce(
     (sum, tx) => sum + transactionFee(tx, (txid, vout) => chain.getUtxo(txid, vout)),
     0,

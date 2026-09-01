@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GENESIS_BITS, bitsToTarget, hashToBigInt, isValidBits, targetToBits } from '../src/core/bits.js';
+import { GENESIS_BITS, bitsToTarget, blockWork, hashToBigInt, isValidBits, targetToBits } from '../src/core/bits.js';
 
 describe('nBits compact target', () => {
   it('round-trips genesis bits 0x20ffffff', () => {
@@ -45,5 +45,12 @@ describe('nBits compact target', () => {
     expect(hashToBigInt('00'.repeat(32))).toBe(0n);
     expect(hashToBigInt('ff'.repeat(32))).toBe((1n << 256n) - 1n);
     expect(() => hashToBigInt('abc')).toThrow(RangeError);
+  });
+
+  it('assigns more work to a tighter compact target', () => {
+    const easy = blockWork(GENESIS_BITS);
+    const harder = blockWork(targetToBits(bitsToTarget(GENESIS_BITS) / 2n));
+    expect(harder > easy).toBe(true);
+    expect(easy > 0n).toBe(true);
   });
 });

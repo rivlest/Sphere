@@ -14,8 +14,12 @@ export const TEST_CONFIG: ChainConfig = {
   retargetInterval: 4,
 };
 
-export async function mineEmptyBlock(chain: Blockchain, minerAddress: string): Promise<Block> {
-  const candidate = await createCandidateBlock(chain, minerAddress, []);
+export async function mineEmptyBlock(
+  chain: Blockchain,
+  minerAddress: string,
+  atTimestamp?: number,
+): Promise<Block> {
+  const candidate = await createCandidateBlock(chain, minerAddress, [], atTimestamp);
   const mined = await mineBlock(candidate.header, { pow: chain.config.pow });
   const block: Block = { ...candidate, header: mined.header, hash: mined.hash };
   await chain.addBlock(block);

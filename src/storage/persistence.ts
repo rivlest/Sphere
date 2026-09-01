@@ -23,7 +23,10 @@ export interface ChainStore {
 
 export interface BlockArchive {
   iterateBlocks(): AsyncGenerator<Block>;
+  iterateBlocksFrom(fromHeight: number): AsyncGenerator<Block>;
   readBlock(height: number): Promise<Block | undefined>;
+  hashAt(height: number): Promise<string | undefined>;
+  blockCount(): Promise<number>;
   appendBlock(block: Block): Promise<void>;
   truncateTo(count: number): Promise<void>;
 }
@@ -149,16 +152,31 @@ export class BinaryChainStore implements ChainStore, BlockArchive {
   }
 
   async *iterateBlocks(): AsyncGenerator<Block> {
+    yield* this.iterateBlocksFrom(0);
+  }
+
+  async *iterateBlocksFrom(fromHeight: number): AsyncGenerator<Block> {
     const index = await this.ensureIndex();
     if (index.length === 0) return;
+    const start = Math.max(0, fromHeight);
+    if (start >= index.length) return;
     const handle = await open(this.datPath, 'r');
     try {
-      for (const entry of index) {
-        yield await this.readEntryFrom(handle, entry);
+      for (let i = start; i < index.length; i++) {
+        yield await this.readEntryFrom(handle, index[i]!);
       }
     } finally {
       await handle.close();
     }
+  }
+
+  async hashAt(height: number): Promise<string | undefined> {
+    const index = await this.ensureIndex();
+    return index[height]?.hash;
+  }
+
+  async blockCount(): Promise<number> {
+    return (await this.ensureIndex()).length;
   }
 
   async appendBlock(block: Block): Promise<void> {

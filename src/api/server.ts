@@ -7,6 +7,7 @@ import type { SphereNode } from '../node.js';
 export async function startApiServer(
   node: SphereNode,
   port: number,
+  host = '127.0.0.1',
 ): Promise<{ app: Express; server: Server; port: number }> {
   const app = express();
   app.use(cors());
@@ -14,7 +15,7 @@ export async function startApiServer(
   mountRoutes(app, node);
 
   const server = await new Promise<Server>((resolve, reject) => {
-    const listener = app.listen(port, () => resolve(listener));
+    const listener = app.listen(port, host, () => resolve(listener));
     listener.once('error', reject);
   });
 

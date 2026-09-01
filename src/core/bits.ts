@@ -82,3 +82,19 @@ export function clampTarget(target: bigint, genesisBits = GENESIS_BITS): bigint 
   const easiest = bitsToTarget(genesisBits);
   return target > easiest ? easiest : target;
 }
+
+/** 2^256. Work of a block is this divided by (target + 1). */
+export const POW_256 = 1n << 256n;
+
+/** Expected hashes to beat `bits`. Higher bits-difficulty → more work. */
+export function blockWork(bits: number): bigint {
+  const target = bitsToTarget(bits);
+  if (target < 0n) throw new RangeError(`bits out of range: ${bits}`);
+  return POW_256 / (target + 1n);
+}
+
+export function cumulativeWorkOf(bits: readonly number[]): bigint {
+  let work = 0n;
+  for (const value of bits) work += blockWork(value);
+  return work;
+}

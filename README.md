@@ -49,7 +49,7 @@ curl http://57.128.203.234:3001/status
 - A CPU and about **4 MB RAM per mining attempt** (any normal PC from the last decade)
 - Outbound internet (to find other nodes). Open ports only if others should connect **in**.
 
-Windows, macOS, and Linux all work. The wallet CLI tries `http://127.0.0.1:3001` first, then the public seed if nothing is listening locally.
+Windows, macOS, and Linux all work. The wallet CLI tries `http://127.0.0.1:3001` first, then the public seed if nothing is listening locally. Home nodes bind REST to **localhost** unless you pass `--public`.
 
 ---
 
@@ -144,6 +144,8 @@ Wait ~10 seconds, then in a **second** terminal:
 curl http://127.0.0.1:3001/status
 ```
 
+REST listens on `127.0.0.1` by default. Seeds and explorers pass `--public` (bind `0.0.0.0`). `POST /transactions` is rate-limited.
+
 You should see `"name": "Sphere"`. With `--mine`, `"mining"` is `true` and `"height"` rises when this node or a peer finds a block.
 
 To add mining later, stop the node (Ctrl+C) and start again with `--mine`. Same Wi-Fi: other Sphere nodes appear via mDNS. Across the internet: `--peers ws://THEIR.IP:6001` or a reachable `--p2p-url`. After the first successful connect, URLs are stored in `data/peers.json`.
@@ -224,7 +226,7 @@ macOS / Linux: `cp .env.example .env` instead of `copy`. More detail: [`sphere-w
 4. About every **144 blocks** (~1 day at 10 min), difficulty moves toward a 10-minute average, at most **×1.4 harder or easier**.
 5. If no block appears for **>100 minutes**, difficulty eases immediately (and after a long outage can fall back to genesis). The chain cannot freeze forever.
 
-You mine by running `npm run start -- --mine --miner-address …`. There is no separate miner binary yet.
+You mine by running `npm run start -- --mine --miner-address …`. The node uses worker threads (one Argon2id search per core, minus one). Set `SPHERE_MINE_WORKERS` to override. There is no pool/Stratum yet.
 
 ---
 
@@ -237,7 +239,7 @@ Not required. Use this if you want others on the internet to dial **in** (home P
 3. Advertise the public WebSocket URL:
 
 ```bash
-npm run start -- --port 3001 --p2p-port 6001 --data-dir ~/sphere-data --p2p-url ws://YOUR.PUBLIC.IP:6001
+npm run start -- --port 3001 --p2p-port 6001 --data-dir ~/sphere-data --p2p-url ws://YOUR.PUBLIC.IP:6001 --public
 ```
 
 Add that `ws://…` URL to [`bootstrap-peers.json`](bootstrap-peers.json) if you want new clones to find you without `--peers`.
@@ -321,7 +323,7 @@ CORS is enabled so the browser wallet can call a local node.
 - Retarget every **144** blocks: `new_target = old × actual / expected`, clamped to ×1.4 / ÷1.4
 - Stall valve: gap **>10×** target spacing (100 min) eases ×1.4 per such window, capped at genesis
 - Mempool: highest fee first, max 500 transactions per block, 1 hour TTL
-- P2P: libp2p (WebSocket + TCP, Sphere DHT, mDNS, public DHT, circuit relay + DCUtR). NAT miners mesh through the seed relay; RFC1918 addresses are not gossiped. Chain sync is batched (32 blocks per message); full block bodies live on disk (`chain.dat`), not as one 50 MB dump.
+- P2P: libp2p (WebSocket + TCP, Sphere DHT, mDNS, public DHT, circuit relay + DCUtR). Sync is headers-first (`/sphere/sync/2.0.0`) with a v1 fallback. Reorgs follow cumulative work, not length. RFC1918 addresses are not gossiped. Full block bodies live on disk (`chain.dat`); UTXO snapshots skip a full replay on restart.
 
 ---
 

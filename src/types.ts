@@ -113,6 +113,10 @@ export type MessageType =
   | 'NEW_TRANSACTION'
   | 'QUERY_CHAIN'
   | 'RESPONSE_CHAIN'
+  | 'QUERY_HEADERS'
+  | 'RESPONSE_HEADERS'
+  | 'QUERY_BODIES'
+  | 'RESPONSE_BODIES'
   | 'QUERY_PEERS'
   | 'RESPONSE_PEERS';
 
@@ -126,10 +130,29 @@ export interface ChainBatch {
   more: boolean;
 }
 
+export interface HeaderEntry {
+  header: BlockHeader;
+  hash: string;
+}
+
+export interface HeaderBatch {
+  fromHeight: number;
+  headers: HeaderEntry[];
+  more: boolean;
+}
+
+export interface BodyQuery {
+  hashes: string[];
+}
+
 export type P2PMessage =
   | { type: 'NEW_BLOCK'; data: Block }
   | { type: 'NEW_TRANSACTION'; data: Transaction }
   | { type: 'QUERY_CHAIN'; data?: ChainQuery }
   | { type: 'RESPONSE_CHAIN'; data: ChainBatch | Block[] }
+  | { type: 'QUERY_HEADERS'; data?: ChainQuery }
+  | { type: 'RESPONSE_HEADERS'; data: HeaderBatch }
+  | { type: 'QUERY_BODIES'; data: BodyQuery }
+  | { type: 'RESPONSE_BODIES'; data: { blocks: Block[] } }
   | { type: 'QUERY_PEERS' }
   | { type: 'RESPONSE_PEERS'; data: string[] };

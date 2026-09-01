@@ -10,7 +10,7 @@ import { ValidationError } from './errors.js';
 import { createGenesisBlock } from './genesis.js';
 import { validateBlockStructure } from './block.js';
 import { computeNextBits } from './retarget.js';
-import { workRatio } from './bits.js';
+import { blockWork, cumulativeWorkOf, workRatio } from './bits.js';
 import {
   outpointKey,
   outputSum,
@@ -20,13 +20,19 @@ import {
 } from './transaction.js';
 import { blockRewardOrbs } from './units.js';
 import type { BlockArchive } from '../storage/persistence.js';
+import {
+  FileUtxoSnapshotStore,
+  UTXO_SNAPSHOT_INTERVAL,
+  type UtxoSnapshot,
+} from '../storage/utxoSnapshot.js';
+import { checkpointConflict, highestCheckpointAtOrBelow } from '../network/checkpoints.js';
 
 export type UtxoMap = Map<string, Utxo>;
 
 /** Full transaction bodies kept in RAM. Headers and the UTXO set cover the whole chain. */
 export const BLOCK_CACHE_SIZE = 288;
 
-type HeaderRecord = { hash: string; header: BlockHeader };
+export type HeaderRecord = { hash: string; header: BlockHeader };
 
 function cloneUtxos(utxos: UtxoMap): UtxoMap {
   const copy: UtxoMap = new Map();
@@ -43,8 +49,11 @@ export class Blockchain {
   private hashToHeight = new Map<string, number>();
   private utxos: UtxoMap = new Map();
   private txIndex = new Map<string, number>();
+  private addressIndex = new Map<string, Set<string>>();
+  private workPrefix: bigint[] = [];
   private cacheLimit = Number.POSITIVE_INFINITY;
   private archive: BlockArchive | null = null;
+  private snapshots: FileUtxoSnapshotStore | null = null;
 
   private constructor(config: ChainConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config, pow: config.pow ?? DEFAULT_CONFIG.pow };
@@ -65,23 +74,31 @@ export class Blockchain {
     config: ChainConfig,
     archive: BlockArchive,
     cacheLimit = BLOCK_CACHE_SIZE,
+    snapshots?: FileUtxoSnapshotStore,
   ): Promise<Blockchain> {
     const chain = new Blockchain(config);
     chain.archive = archive;
     chain.cacheLimit = cacheLimit;
-    let count = 0;
-    for await (const block of archive.iterateBlocks()) {
-      if (count === 0) {
-        await chain.applyValidBlock(block, { skipLinkChecks: true, persist: false });
-      } else {
-        await chain.applyValidBlock(block, { persist: false });
+    chain.snapshots = snapshots ?? null;
+
+    const restored = await chain.tryRestoreSnapshot();
+    if (!restored) {
+      let count = 0;
+      for await (const block of archive.iterateBlocks()) {
+        if (count === 0) {
+          await chain.applyValidBlock(block, { skipLinkChecks: true, persist: false });
+        } else {
+          await chain.applyValidBlock(block, { persist: false });
+        }
+        count += 1;
       }
-      count += 1;
+      if (count === 0) {
+        const genesis = await createGenesisBlock(chain.config);
+        await chain.applyValidBlock(genesis, { skipLinkChecks: true, persist: true });
+      }
     }
-    if (count === 0) {
-      const genesis = await createGenesisBlock(chain.config);
-      await chain.applyValidBlock(genesis, { skipLinkChecks: true, persist: true });
-    }
+
+    await chain.maybeWriteSnapshot();
     return chain;
   }
 
@@ -97,9 +114,23 @@ export class Blockchain {
     return this.latestBlock.header.bits;
   }
 
+  /** Cumulative PoW of the canonical chain (sum of blockWork). */
+  get cumulativeWork(): bigint {
+    return this.workPrefix[this.height] ?? 0n;
+  }
+
   /** Work vs genesis target (1 at height 0). Exposed as `difficulty` on the REST status API. */
   get difficulty(): number {
     return workRatio(this.bits, this.config.initialBits);
+  }
+
+  workAt(height: number): bigint {
+    return this.workPrefix[height] ?? 0n;
+  }
+
+  getHeader(height: number): HeaderRecord | undefined {
+    const record = this.headers[height];
+    return record ? { hash: record.hash, header: { ...record.header } } : undefined;
   }
 
   get latestBlock(): Block {
@@ -169,7 +200,14 @@ export class Blockchain {
   }
 
   getUtxos(address: string): Utxo[] {
-    return [...this.utxos.values()].filter((utxo) => utxo.address === address);
+    const keys = this.addressIndex.get(address);
+    if (!keys || keys.size === 0) return [];
+    const out: Utxo[] = [];
+    for (const key of keys) {
+      const utxo = this.utxos.get(key);
+      if (utxo) out.push(utxo);
+    }
+    return out;
   }
 
   getAccount(address: string): Account {
@@ -247,11 +285,17 @@ export class Blockchain {
     for (const block of blocks) {
       this.indexBlock(block);
     }
+    this.rebuildAddressIndex();
   }
 
   async replaceChain(newChain: Block[]): Promise<boolean> {
-    if (newChain.length <= this.headers.length) {
+    const incomingWork = cumulativeWorkOf(newChain.map((block) => block.header.bits));
+    if (incomingWork <= this.cumulativeWork) {
       return false;
+    }
+    for (const block of newChain) {
+      const conflict = checkpointConflict(block.header.index, block.hash);
+      if (conflict) throw new ValidationError(conflict);
     }
     await this.assertValidChain(newChain);
     const { utxos, txIndex } = await this.replay(newChain);
@@ -261,12 +305,14 @@ export class Blockchain {
     for (const block of newChain) {
       this.indexBlock(block);
     }
+    this.rebuildAddressIndex();
     if (this.archive) {
       await this.archive.truncateTo(0);
       for (const block of newChain) {
         await this.archive.appendBlock(block);
       }
     }
+    await this.maybeWriteSnapshot();
     return true;
   }
 
@@ -283,6 +329,11 @@ export class Blockchain {
     if (newHeight < 0 || newHeight >= this.headers.length) {
       throw new ValidationError('Invalid rewind height');
     }
+    const locked = highestCheckpointAtOrBelow(this.height);
+    if (locked >= 0 && newHeight < locked) {
+      throw new ValidationError(`Cannot rewind below checkpoint at height ${locked}`);
+    }
+    await this.snapshots?.clearIfAfter(newHeight);
     if (this.archive) {
       await this.archive.truncateTo(newHeight + 1);
       await this.rebuildFromArchive();
@@ -305,6 +356,7 @@ export class Blockchain {
       this.applyBlockToState(block, this.utxos, this.txIndex);
       this.indexBlock(block);
     }
+    this.rebuildAddressIndex();
   }
 
   private async replay(blocks: Block[]): Promise<{ utxos: UtxoMap; txIndex: Map<string, number> }> {
@@ -427,16 +479,23 @@ export class Blockchain {
   }
 
   private applyUserTransaction(tx: Transaction, utxos: UtxoMap): void {
+    const track = utxos === this.utxos;
     for (const input of tx.inputs) {
-      utxos.delete(outpointKey(input.txid, input.vout));
+      const key = outpointKey(input.txid, input.vout);
+      const spent = utxos.get(key);
+      utxos.delete(key);
+      if (track && spent) this.removeAddressUtxo(spent.address, key);
     }
     tx.outputs.forEach((output, vout) => {
-      utxos.set(outpointKey(tx.hash, vout), {
+      const utxo: Utxo = {
         txid: tx.hash,
         vout,
         address: output.address,
         amount: output.amount,
-      });
+      };
+      const key = outpointKey(tx.hash, vout);
+      utxos.set(key, utxo);
+      if (track) this.addAddressUtxo(utxo);
     });
   }
 
@@ -472,6 +531,7 @@ export class Blockchain {
     if (options.persist && this.archive) {
       await this.archive.appendBlock(block);
     }
+    if (options.persist) await this.maybeWriteSnapshot();
   }
 
   private indexBlock(block: Block): void {
@@ -481,6 +541,9 @@ export class Blockchain {
       this.headers.length = height + 1;
     }
     this.hashToHeight.set(block.hash, height);
+    const prevWork = height === 0 ? 0n : (this.workPrefix[height - 1] ?? 0n);
+    this.workPrefix[height] = prevWork + blockWork(block.header.bits);
+    this.workPrefix.length = height + 1;
     this.rememberFull(block);
   }
 
@@ -503,5 +566,88 @@ export class Blockchain {
     this.headers = [];
     this.fullBlocks.clear();
     this.hashToHeight.clear();
+    this.workPrefix = [];
+    this.addressIndex = new Map();
+  }
+
+  private addAddressUtxo(utxo: Utxo): void {
+    const key = outpointKey(utxo.txid, utxo.vout);
+    let set = this.addressIndex.get(utxo.address);
+    if (!set) {
+      set = new Set();
+      this.addressIndex.set(utxo.address, set);
+    }
+    set.add(key);
+  }
+
+  private removeAddressUtxo(address: string, key: string): void {
+    const set = this.addressIndex.get(address);
+    if (!set) return;
+    set.delete(key);
+    if (set.size === 0) this.addressIndex.delete(address);
+  }
+
+  private rebuildAddressIndex(): void {
+    this.addressIndex = new Map();
+    for (const utxo of this.utxos.values()) {
+      this.addAddressUtxo(utxo);
+    }
+  }
+
+  private async tryRestoreSnapshot(): Promise<boolean> {
+    if (!this.snapshots || !this.archive) return false;
+    const snap = await this.snapshots.load();
+    if (!snap) return false;
+    const count = await this.archive.blockCount();
+    if (snap.height < 0 || snap.height >= count) return false;
+    const diskHash = await this.archive.hashAt(snap.height);
+    if (!diskHash || diskHash !== snap.tipHash) return false;
+    this.applySnapshot(snap);
+    const tip = await this.archive.readBlock(snap.height);
+    if (tip) this.rememberFull(tip);
+    for await (const block of this.archive.iterateBlocksFrom(snap.height + 1)) {
+      await this.applyValidBlock(block, { persist: false });
+    }
+    return true;
+  }
+
+  private applySnapshot(snap: UtxoSnapshot): void {
+    this.resetIndex();
+    this.utxos = new Map();
+    for (const utxo of snap.utxos) {
+      this.utxos.set(outpointKey(utxo.txid, utxo.vout), { ...utxo });
+    }
+    this.txIndex = new Map(snap.txIndex);
+    this.addressIndex = new Map(snap.addressIndex.map(([address, keys]) => [address, new Set(keys)]));
+    for (const record of snap.headers) {
+      const height = record.header.index;
+      this.headers[height] = { hash: record.hash, header: { ...record.header } };
+      this.hashToHeight.set(record.hash, height);
+      const prevWork = height === 0 ? 0n : (this.workPrefix[height - 1] ?? 0n);
+      this.workPrefix[height] = prevWork + blockWork(record.header.bits);
+    }
+    this.headers.length = snap.height + 1;
+    this.workPrefix.length = snap.height + 1;
+  }
+
+  private async maybeWriteSnapshot(): Promise<void> {
+    if (!this.snapshots || this.height < 0) return;
+    if (this.height % UTXO_SNAPSHOT_INTERVAL !== 0) return;
+    await this.snapshots.save(this.exportSnapshot());
+  }
+
+  exportSnapshot(): UtxoSnapshot {
+    return {
+      height: this.height,
+      tipHash: this.headers[this.height]!.hash,
+      work: this.cumulativeWork.toString(),
+      headers: this.headers.map((record) => ({
+        hash: record.hash,
+        header: { ...record.header },
+      })),
+      utxos: [...this.utxos.values()],
+      txIndex: [...this.txIndex.entries()],
+      addressIndex: [...this.addressIndex.entries()].map(([address, keys]) => [address, [...keys]]),
+    };
   }
 }

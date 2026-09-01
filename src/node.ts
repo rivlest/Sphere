@@ -1,14 +1,16 @@
 import type { Server } from 'node:http';
-import type { Block, ChainConfig, ChainQuery, Transaction } from './types.js';
+import type { Block, BodyQuery, ChainConfig, ChainQuery, Transaction } from './types.js';
 import { DEFAULT_CONFIG } from './types.js';
-import { Blockchain } from './core/blockchain.js';
+import { Blockchain, BLOCK_CACHE_SIZE } from './core/blockchain.js';
 import { createCandidateBlock } from './core/block.js';
+import { mineBlockParallel } from './core/minePool.js';
 import { mineBlock } from './core/proofOfWork.js';
 import { ValidationError } from './core/errors.js';
 import { isCoinbaseTx, outpointKey, validateTransactionStructure, type Utxo } from './core/transaction.js';
 import { isValidAddress } from './wallet/keys.js';
 import { Mempool } from './mempool/mempool.js';
 import { BinaryChainStore, type ChainStore } from './storage/persistence.js';
+import { FileUtxoSnapshotStore } from './storage/utxoSnapshot.js';
 import { P2PNetwork, type PeerSocket, normalizePeerUrl } from './network/p2p.js';
 import { DEFAULT_SEED_PEERS } from './network/seeds.js';
 import { fetchBootstrapPeers, LIBP2P_BOOTSTRAP } from './network/discovery.js';
@@ -20,7 +22,9 @@ import {
   MESH_READY_MESH_PEERS,
 } from './network/gossip.js';
 import { PeerBook, isPeerUrl } from './network/peerBook.js';
-import { isBlockArray, isChainBatch, SYNC_BATCH_SIZE } from './network/sync.js';
+import { checkpointConflict, highestCheckpointAtOrBelow } from './network/checkpoints.js';
+import { PeerScore } from './network/peerScore.js';
+import { headerPoWValid, isBlockArray, isBodyBatch, isChainBatch, isHeaderBatch, SYNC_BATCH_SIZE } from './network/sync.js';
 import { faucetFromEnv, type TestFaucet } from './api/faucet.js';
 import { startApiServer } from './api/server.js';
 
@@ -37,6 +41,10 @@ export interface NodeOptions {
   dataDir: string;
   config?: Partial<ChainConfig>;
   store?: ChainStore;
+  /** Bind REST here. Default 127.0.0.1. Use `0.0.0.0` / `--public` on a seed. */
+  rpcBind?: string;
+  /** Convenience: bind REST on 0.0.0.0. */
+  publicRpc?: boolean;
   silent?: boolean;
 }
 
@@ -53,6 +61,8 @@ export class SphereNode {
   private readonly silent: boolean;
   private readonly peerBook: PeerBook;
   private readonly faucet: TestFaucet | null;
+  private readonly peerScore = new PeerScore();
+  private readonly rpcHost: string;
   private peerRefresh: ReturnType<typeof setInterval> | null = null;
   private httpServer: Server | null = null;
   private mining = false;
@@ -80,6 +90,7 @@ export class SphereNode {
     this.silent = Boolean(options.silent);
     this.peerBook = new PeerBook(options.dataDir);
     this.faucet = faucetFromEnv();
+    this.rpcHost = options.publicRpc ? '0.0.0.0' : (options.rpcBind ?? '127.0.0.1');
     this.p2p = new P2PNetwork({
       silent: this.silent,
       dataDir: options.dataDir,
@@ -116,11 +127,11 @@ export class SphereNode {
     const advertised =
       this.options.advertisedP2pUrl?.replace(/\/$/, '') ?? `ws://127.0.0.1:${this.p2pPort}`;
     this.p2p.setAdvertisedUrl(advertised);
-    const api = await startApiServer(this, this.options.httpPort);
+    const api = await startApiServer(this, this.options.httpPort, this.rpcHost);
     this.httpServer = api.server;
     this.httpPort = api.port;
 
-    this.log(`REST API on http://127.0.0.1:${this.httpPort}`);
+    this.log(`REST API on http://${this.rpcHost === '0.0.0.0' ? '127.0.0.1' : this.rpcHost}:${this.httpPort}`);
     this.log(`P2P on ${advertised}`);
     this.log(
       `height=${this.blockchain.height} bits=0x${this.blockchain.bits.toString(16)} work=${this.blockchain.difficulty}`,
@@ -182,7 +193,7 @@ export class SphereNode {
       throw new ValidationError('Mining requires a valid miner address');
     }
     const candidate = await this.buildCandidate();
-    const mined = await mineBlock(candidate.header, { pow: this.config.pow });
+        const mined = await mineBlock(candidate.header, { pow: this.config.pow });
     const block: Block = { ...candidate, header: mined.header, hash: mined.hash };
     await this.acceptLocalBlock(block);
     return block;
@@ -237,7 +248,12 @@ export class SphereNode {
   private async loadChain(): Promise<void> {
     try {
       if (this.store instanceof BinaryChainStore) {
-        this.blockchain = await Blockchain.openArchive(this.config, this.store);
+        this.blockchain = await Blockchain.openArchive(
+          this.config,
+          this.store,
+          BLOCK_CACHE_SIZE,
+          new FileUtxoSnapshotStore(this.dataDir),
+        );
       } else {
         const snapshot = await this.store.load();
         this.blockchain = snapshot
@@ -264,6 +280,18 @@ export class SphereNode {
     this.p2p.on('queryChain', (from: PeerSocket, query?: ChainQuery) => {
       void this.respondChain(from, query);
     });
+    this.p2p.on('queryHeaders', (from: PeerSocket, query?: ChainQuery) => {
+      void this.respondHeaders(from, query);
+    });
+    this.p2p.on('headers', (data: unknown, from: PeerSocket) => {
+      this.enqueueInbound(() => this.onPeerHeaders(data, from));
+    });
+    this.p2p.on('queryBodies', (from: PeerSocket, query: BodyQuery) => {
+      void this.respondBodies(from, query);
+    });
+    this.p2p.on('bodies', (data: unknown, from: PeerSocket) => {
+      this.enqueueInbound(() => this.onPeerBodies(data, from));
+    });
     this.p2p.on('queryPeers', (from: PeerSocket) => {
       this.p2p.send(from, { type: 'RESPONSE_PEERS', data: this.gossipPeerUrls() });
     });
@@ -271,10 +299,12 @@ export class SphereNode {
       void this.connectDiscovered(peers);
     });
     this.p2p.on('peerOpen', (from: PeerSocket) => {
-      this.p2p.send(from, {
-        type: 'QUERY_CHAIN',
-        data: { fromHeight: this.blockchain.height + 1 },
-      });
+      const fromHeight = this.blockchain.height + 1;
+      if (from.syncVersion >= 2) {
+        this.p2p.send(from, { type: 'QUERY_HEADERS', data: { fromHeight } });
+      } else {
+        this.p2p.send(from, { type: 'QUERY_CHAIN', data: { fromHeight } });
+      }
       this.p2p.send(from, { type: 'QUERY_PEERS' });
       this.p2p.send(from, { type: 'RESPONSE_PEERS', data: this.gossipPeerUrls() });
     });
@@ -285,11 +315,86 @@ export class SphereNode {
     const blocks = await this.blockchain.getBlocksRange(fromHeight, SYNC_BATCH_SIZE);
     const more = fromHeight + blocks.length < this.blockchain.length;
     this.p2p.send(from, { type: 'RESPONSE_CHAIN', data: { fromHeight, blocks, more } });
-    if (!more) {
-      for (const tx of this.mempool.getAll()) {
-        this.p2p.send(from, { type: 'NEW_TRANSACTION', data: tx });
-      }
+    if (!more) this.flushMempoolTo(from);
+  }
+
+  private async respondHeaders(from: PeerSocket, query?: ChainQuery): Promise<void> {
+    const fromHeight = Math.max(0, Math.floor(query?.fromHeight ?? 0));
+    const headers = [];
+    const end = Math.min(this.blockchain.length, fromHeight + SYNC_BATCH_SIZE);
+    for (let height = fromHeight; height < end; height++) {
+      const record = this.blockchain.getHeader(height);
+      if (record) headers.push(record);
     }
+    const more = fromHeight + headers.length < this.blockchain.length;
+    this.p2p.send(from, { type: 'RESPONSE_HEADERS', data: { fromHeight, headers, more } });
+  }
+
+  private async respondBodies(from: PeerSocket, query: BodyQuery): Promise<void> {
+    const hashes = Array.isArray(query?.hashes) ? query.hashes.slice(0, SYNC_BATCH_SIZE) : [];
+    const blocks: Block[] = [];
+    for (const hash of hashes) {
+      const block = await this.blockchain.fetchBlockByHash(hash);
+      if (block) blocks.push(block);
+    }
+    this.p2p.send(from, { type: 'RESPONSE_BODIES', data: { blocks } });
+    if (hashes.length < SYNC_BATCH_SIZE) this.flushMempoolTo(from);
+  }
+
+  private flushMempoolTo(from: PeerSocket): void {
+    for (const tx of this.mempool.getAll()) {
+      this.p2p.send(from, { type: 'NEW_TRANSACTION', data: tx });
+    }
+  }
+
+  private async onPeerHeaders(data: unknown, from: PeerSocket): Promise<void> {
+    if (this.peerScore.isBanned(from.id) || !isHeaderBatch(data)) return;
+    const wanted: string[] = [];
+    let prevHash =
+      data.fromHeight === 0 ? undefined : this.blockchain.hashAt(data.fromHeight - 1);
+    for (const entry of data.headers) {
+      const conflict = checkpointConflict(entry.header.index, entry.hash);
+      if (conflict || !(await headerPoWValid(entry, this.config))) {
+        this.notePeerInvalid(from, conflict ?? 'invalid header PoW');
+        return;
+      }
+      if (prevHash !== undefined && entry.header.previousHash !== prevHash) {
+        this.notePeerInvalid(from, 'header previousHash mismatch');
+        return;
+      }
+      const have = this.blockchain.hashAt(entry.header.index);
+      if (have === entry.hash) {
+        prevHash = entry.hash;
+        continue;
+      }
+      if (have && have !== entry.hash) {
+        const locked = highestCheckpointAtOrBelow(this.blockchain.height);
+        if (locked >= 0 && entry.header.index <= locked) {
+          this.notePeerInvalid(from, 'header fork below checkpoint');
+          return;
+        }
+      }
+      wanted.push(entry.hash);
+      prevHash = entry.hash;
+    }
+    if (wanted.length > 0) {
+      this.p2p.send(from, { type: 'QUERY_BODIES', data: { hashes: wanted } });
+    } else if (data.more) {
+      this.p2p.send(from, {
+        type: 'QUERY_HEADERS',
+        data: { fromHeight: data.fromHeight + data.headers.length },
+      });
+    }
+  }
+
+  private async onPeerBodies(data: unknown, from: PeerSocket): Promise<void> {
+    if (this.peerScore.isBanned(from.id) || !isBodyBatch(data)) return;
+    if (data.blocks.length === 0) return;
+    await this.onChainBatch(
+      { fromHeight: data.blocks[0]!.header.index, blocks: data.blocks, more: false },
+      from,
+    );
+    this.requestSync(from);
   }
 
   private gossipPeerUrls(): string[] {
@@ -314,6 +419,11 @@ export class SphereNode {
     if (this.peerBook.add(normalized)) {
       void this.peerBook.save();
     }
+  }
+
+  private notePeerInvalid(from: PeerSocket, reason: string): void {
+    const banned = this.peerScore.noteInvalid(from.id);
+    this.log(`peer ${from.id.slice(0, 12)}… ${reason}${banned ? ' (banned)' : ''}`);
   }
 
   private async tryDial(url: string): Promise<void> {
@@ -344,6 +454,7 @@ export class SphereNode {
   }
 
   private onPeerTransaction(tx: Transaction, from: PeerSocket): void {
+    if (this.peerScore.isBanned(from.id)) return;
     try {
       if (
         isCoinbaseTx(tx) ||
@@ -359,24 +470,40 @@ export class SphereNode {
       );
       this.p2p.broadcast({ type: 'NEW_TRANSACTION', data: tx }, from);
       this.interruptMining();
+      this.peerScore.noteValid(from.id);
     } catch {
-      // Untrusted data: drop invalid transactions.
+      this.notePeerInvalid(from, 'invalid transaction');
     }
   }
 
   private async onPeerBlock(block: Block, from: PeerSocket): Promise<void> {
+    if (this.peerScore.isBanned(from.id)) return;
+    const conflict = checkpointConflict(block.header.index, block.hash);
+    if (conflict) {
+      this.notePeerInvalid(from, conflict);
+      return;
+    }
     await this.withChain(async () => {
       if (this.blockchain.hasBlockHash(block.hash)) return;
       try {
         await this.blockchain.addBlock(block);
         this.afterAcceptedBlock(block, from);
+        this.peerScore.noteValid(from.id);
         this.log(`accepted block #${block.header.index} ${block.hash.slice(0, 12)}… from peer`);
       } catch {
+        this.notePeerInvalid(from, `rejected block #${block.header.index}`);
         if (block.header.index > this.blockchain.height) {
-          this.p2p.send(from, {
-            type: 'QUERY_CHAIN',
-            data: { fromHeight: this.blockchain.height + 1 },
-          });
+          if (from.syncVersion >= 2) {
+            this.p2p.send(from, {
+              type: 'QUERY_HEADERS',
+              data: { fromHeight: this.blockchain.height + 1 },
+            });
+          } else {
+            this.p2p.send(from, {
+              type: 'QUERY_CHAIN',
+              data: { fromHeight: this.blockchain.height + 1 },
+            });
+          }
         }
       }
     });
@@ -399,12 +526,18 @@ export class SphereNode {
     batch: { fromHeight: number; blocks: Block[]; more: boolean },
     from: PeerSocket,
   ): Promise<void> {
+    if (this.peerScore.isBanned(from.id)) return;
     const advanced = await this.withChain(async () => {
       let applied = 0;
       let height = batch.fromHeight;
       for (const block of batch.blocks) {
         if (block.header.index !== height) {
           this.log(`ignored misindexed peer block at ${height}`);
+          break;
+        }
+        const conflict = checkpointConflict(block.header.index, block.hash);
+        if (conflict) {
+          this.notePeerInvalid(from, conflict);
           break;
         }
         const have = this.blockchain.hashAt(height);
@@ -417,18 +550,21 @@ export class SphereNode {
             this.log('rejected peer chain: different genesis');
             return 0;
           }
+          const locked = highestCheckpointAtOrBelow(this.blockchain.height);
+          if (locked >= 0 && height <= locked) {
+            this.notePeerInvalid(from, 'fork below checkpoint');
+            return 0;
+          }
           await this.blockchain.rewindTo(height - 1);
         }
         if (block.header.index !== this.blockchain.height + 1) {
-          this.p2p.send(from, {
-            type: 'QUERY_CHAIN',
-            data: { fromHeight: this.blockchain.height + 1 },
-          });
+          this.requestSync(from);
           return applied;
         }
         try {
           await this.blockchain.addBlock(block);
         } catch (error) {
+          this.notePeerInvalid(from, `rejected peer block #${block.header.index}`);
           this.log(`rejected peer block #${block.header.index}: ${(error as Error).message}`);
           break;
         }
@@ -437,6 +573,7 @@ export class SphereNode {
         height += 1;
       }
       if (applied > 0) {
+        this.peerScore.noteValid(from.id);
         this.interruptMining();
         this.persist();
         const tip = this.blockchain.latestBlock;
@@ -447,10 +584,16 @@ export class SphereNode {
     });
 
     if (batch.more || (advanced === 0 && batch.blocks.length > 0 && batch.fromHeight > this.blockchain.height + 1)) {
-      this.p2p.send(from, {
-        type: 'QUERY_CHAIN',
-        data: { fromHeight: this.blockchain.height + 1 },
-      });
+      this.requestSync(from);
+    }
+  }
+
+  private requestSync(from: PeerSocket): void {
+    const fromHeight = this.blockchain.height + 1;
+    if (from.syncVersion >= 2) {
+      this.p2p.send(from, { type: 'QUERY_HEADERS', data: { fromHeight } });
+    } else {
+      this.p2p.send(from, { type: 'QUERY_CHAIN', data: { fromHeight } });
     }
   }
 
@@ -484,7 +627,7 @@ export class SphereNode {
       this.mineAbort = new AbortController();
       try {
         const candidate = await this.buildCandidate();
-        const mined = await mineBlock(candidate.header, {
+        const mined = await mineBlockParallel(candidate.header, {
           signal: this.mineAbort.signal,
           pow: this.config.pow,
         });

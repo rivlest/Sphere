@@ -55,7 +55,7 @@ Type=simple
 User=$(id -un)
 Group=$(id -gn)
 WorkingDirectory=$APP_DIR
-ExecStart=$NPM_BIN run start -- --port 3001 --p2p-port 6001 --data-dir $DATA_DIR --p2p-url $SEED_P2P_URL
+ExecStart=$NPM_BIN run start -- --port 3001 --p2p-port 6001 --data-dir $DATA_DIR --p2p-url $SEED_P2P_URL --public
 Restart=always
 RestartSec=4
 Environment=NODE_ENV=production

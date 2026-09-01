@@ -6,6 +6,7 @@ import { createCandidateBlock } from '../src/core/block.js';
 import { mineBlock } from '../src/core/proofOfWork.js';
 import { createWallet } from '../src/wallet/wallet.js';
 import { BinaryChainStore, JsonFileChainStore } from '../src/storage/persistence.js';
+import { FileUtxoSnapshotStore } from '../src/storage/utxoSnapshot.js';
 import { Mempool } from '../src/mempool/mempool.js';
 import { ValidationError } from '../src/core/errors.js';
 import { bitsToTarget, retargetTarget, targetToBits, workRatio } from '../src/core/bits.js';
@@ -81,14 +82,52 @@ describe('blockchain', () => {
     await expect(chain.addBlock(other.latestBlock)).rejects.toThrow(ValidationError);
   });
 
-  it('adopts a longer valid chain', async () => {
+  it('adopts a longer valid chain when work is also higher', async () => {
     const shorter = await Blockchain.open(TEST_CONFIG);
     const longer = await Blockchain.open(TEST_CONFIG);
     await mineEmptyBlock(shorter, faucetAddress());
     await mineEmptyBlock(longer, faucetAddress());
     await mineEmptyBlock(longer, faucetAddress());
+    expect(longer.cumulativeWork > shorter.cumulativeWork).toBe(true);
     expect(await shorter.replaceChain(longer.getBlocks())).toBe(true);
     expect(shorter.height).toBe(2);
+  });
+
+  it('adopts a heavier chain even when it is shorter', async () => {
+    const genesis = (await Blockchain.open(TEST_CONFIG)).latestBlock;
+    const easy = await Blockchain.open(TEST_CONFIG);
+    const heavy = await Blockchain.open(TEST_CONFIG);
+    let easyTime = genesis.header.timestamp;
+    for (let i = 0; i < 20; i++) {
+      easyTime += TEST_CONFIG.targetBlockTimeMs;
+      await mineEmptyBlock(easy, faucetAddress(), easyTime);
+    }
+    let heavyTime = genesis.header.timestamp;
+    for (let i = 0; i < 16; i++) {
+      heavyTime += 1;
+      await mineEmptyBlock(heavy, faucetAddress(), heavyTime);
+    }
+    expect(easy.height).toBeGreaterThan(heavy.height);
+    expect(heavy.cumulativeWork > easy.cumulativeWork).toBe(true);
+    expect(await easy.replaceChain(heavy.getBlocks())).toBe(true);
+    expect(easy.height).toBe(heavy.height);
+    expect(await heavy.replaceChain(easy.getBlocks())).toBe(false);
+  }, 120_000);
+
+  it('reloads UTXO from a snapshot without replaying every body', async () => {
+    await withTempDir(async (dir) => {
+      const store = new BinaryChainStore(dir);
+      const snaps = new FileUtxoSnapshotStore(dir);
+      const chain = await Blockchain.openArchive(TEST_CONFIG, store, 8, snaps);
+      await mineEmptyBlock(chain, faucetAddress());
+      await mineEmptyBlock(chain, faucetAddress());
+      await snaps.save(chain.exportSnapshot());
+      const restored = await Blockchain.openArchive(TEST_CONFIG, store, 8, snaps);
+      expect(restored.height).toBe(2);
+      expect(restored.latestBlock.hash).toBe(chain.latestBlock.hash);
+      expect(restored.getAccount(faucetAddress()).balance).toBe(TEST_CONFIG.initialRewardOrbs * 3);
+      expect(restored.cumulativeWork).toBe(chain.cumulativeWork);
+    });
   });
 
   it('reads old block bodies from disk after the RAM cache evicts them', async () => {

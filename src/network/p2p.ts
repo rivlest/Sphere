@@ -19,6 +19,7 @@ import type { Connection, PeerId, PrivateKey, Stream } from '@libp2p/interface';
 import type { P2PMessage } from '../types.js';
 import { decodeMessage, encodeMessage } from './messages.js';
 import { sphereDiscoveryCid } from './discovery.js';
+import { SPHERE_SYNC_PROTOCOL_V2 } from './sync.js';
 import { denyOutboundDial, isGossipablePeerAddress } from './gossip.js';
 import {
   listenMultiaddrs,
@@ -34,6 +35,7 @@ export const SPHERE_DHT_PROTOCOL = '/sphere/kad/1.0.0';
 export interface PeerSocket {
   id: string;
   url?: string;
+  syncVersion: 1 | 2;
 }
 
 export interface P2PNetworkOptions {
@@ -59,6 +61,7 @@ export class P2PNetwork extends EventEmitter {
   private readonly streams = new Map<string, Set<Stream>>();
   private readonly buffers = new Map<Stream, Buffer>();
   private readonly opening = new Set<string>();
+  private readonly syncVersion = new Map<string, 1 | 2>();
 
   constructor(options: P2PNetworkOptions) {
     super();
@@ -220,7 +223,10 @@ export class P2PNetwork extends EventEmitter {
     });
 
     await this.node.handle(SPHERE_SYNC_PROTOCOL, (stream, connection) => {
-      this.attachStream(stream, connection);
+      this.attachStream(stream, connection, 1);
+    });
+    await this.node.handle(SPHERE_SYNC_PROTOCOL_V2, (stream, connection) => {
+      this.attachStream(stream, connection, 2);
     });
 
     this.node.addEventListener('peer:identify', (event) => {
@@ -256,7 +262,14 @@ export class P2PNetwork extends EventEmitter {
     if (!this.node) throw new Error('P2P is not listening');
     const ma = toMultiaddrString(addr);
     if (this.isOwnAddress(ma)) return;
-    const stream = await this.node.dialProtocol(multiaddr(ma), SPHERE_SYNC_PROTOCOL);
+    let stream: Stream;
+    let version: 1 | 2 = 2;
+    try {
+      stream = await this.node.dialProtocol(multiaddr(ma), SPHERE_SYNC_PROTOCOL_V2);
+    } catch {
+      stream = await this.node.dialProtocol(multiaddr(ma), SPHERE_SYNC_PROTOCOL);
+      version = 1;
+    }
     const conn = this.node
       .getConnections()
       .find((item) => item.streams.some((open) => open.id === stream.id));
@@ -264,7 +277,7 @@ export class P2PNetwork extends EventEmitter {
       stream.abort(new Error('Missing connection after dial'));
       return;
     }
-    this.attachStream(stream, conn);
+    this.attachStream(stream, conn, version);
   }
 
   broadcast(message: P2PMessage, except?: PeerSocket): void {
@@ -359,9 +372,16 @@ export class P2PNetwork extends EventEmitter {
     if (id === this.node.peerId.toString()) return;
     this.opening.add(id);
     try {
-      const stream = await this.node.dialProtocol(peerId, SPHERE_SYNC_PROTOCOL);
+      let stream: Stream;
+      let version: 1 | 2 = 2;
+      try {
+        stream = await this.node.dialProtocol(peerId, SPHERE_SYNC_PROTOCOL_V2);
+      } catch {
+        stream = await this.node.dialProtocol(peerId, SPHERE_SYNC_PROTOCOL);
+        version = 1;
+      }
       const conn = this.node.getConnections(peerId)[0];
-      if (conn) this.attachStream(stream, conn);
+      if (conn) this.attachStream(stream, conn, version);
     } catch (error) {
       this.log('sync stream failed', `${id} ${(error as Error).message}`);
     } finally {
@@ -369,7 +389,7 @@ export class P2PNetwork extends EventEmitter {
     }
   }
 
-  private attachStream(stream: Stream, connection: Connection): void {
+  private attachStream(stream: Stream, connection: Connection, version: 1 | 2): void {
     const id = connection.remotePeer.toString();
     const existing = this.streams.get(id) ?? new Set();
     if (existing.has(stream)) return;
@@ -378,8 +398,14 @@ export class P2PNetwork extends EventEmitter {
     this.streams.set(id, existing);
     this.buffers.set(stream, Buffer.alloc(0));
     stream.maxReadBufferLength = MAX_FRAME + 8;
+    const current = this.syncVersion.get(id) ?? 1;
+    this.syncVersion.set(id, current === 2 || version === 2 ? 2 : 1);
 
-    const peer: PeerSocket = { id, url: connection.remoteAddr.toString() };
+    const peer: PeerSocket = {
+      id,
+      url: connection.remoteAddr.toString(),
+      syncVersion: this.syncVersion.get(id) ?? version,
+    };
     stream.addEventListener('message', (event) => {
       this.onBytes(stream, peer, Buffer.from(event.data.subarray()));
     });
@@ -419,6 +445,7 @@ export class P2PNetwork extends EventEmitter {
       this.buffers.delete(stream);
     }
     this.streams.delete(id);
+    this.syncVersion.delete(id);
     this.log('disconnected', id);
   }
 
@@ -435,6 +462,18 @@ export class P2PNetwork extends EventEmitter {
         break;
       case 'RESPONSE_CHAIN':
         this.emit('chain', message.data, from);
+        break;
+      case 'QUERY_HEADERS':
+        this.emit('queryHeaders', from, message.data);
+        break;
+      case 'RESPONSE_HEADERS':
+        this.emit('headers', message.data, from);
+        break;
+      case 'QUERY_BODIES':
+        this.emit('queryBodies', from, message.data);
+        break;
+      case 'RESPONSE_BODIES':
+        this.emit('bodies', message.data, from);
         break;
       case 'QUERY_PEERS':
         this.emit('queryPeers', from);

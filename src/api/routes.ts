@@ -8,6 +8,7 @@ import { NETWORK_NAME, TICKER, type Transaction } from '../types.js';
 import { summarizeTransaction, transactionTouchesAddress, type Utxo } from '../core/transaction.js';
 import { buildMarketSnapshot } from './marketSnapshot.js';
 import { marketPrice } from './marketPrice.js';
+import { rateLimit } from './rateLimit.js';
 
 export function createRoutes(node: SphereNode): Router {
   const router = Router();
@@ -27,6 +28,7 @@ export function createRoutes(node: SphereNode): Router {
       mining: node.isMining,
       mempool: node.mempool.size,
       latestHash: latest.hash,
+      work: node.blockchain.cumulativeWork.toString(),
     });
   });
 
@@ -135,7 +137,10 @@ export function createRoutes(node: SphereNode): Router {
     res.json({ address, transactions });
   });
 
-  router.post('/transactions', (req, res) => {
+  router.post(
+    '/transactions',
+    rateLimit({ windowMs: 60_000, max: 12 }),
+    (req, res) => {
     try {
       const tx = node.submitTransaction(req.body);
       res.status(201).json({ accepted: true, hash: tx.hash });

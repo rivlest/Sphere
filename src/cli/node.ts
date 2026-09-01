@@ -12,6 +12,8 @@ program
   .option('--peers <urls>', 'comma-separated extra peer URLs', '')
   .option('--no-default-seeds', 'private node: skip GitHub peer list and public DHT discovery')
   .option('--p2p-url <url>', 'public WebSocket URL advertised to peers, e.g. ws://1.2.3.4:6001')
+  .option('--public', 'bind REST on 0.0.0.0 (default is 127.0.0.1)')
+  .option('--rpc-bind <host>', 'REST bind address', '127.0.0.1')
   .option('--mine', 'mine blocks continuously')
   .option('--miner-address <address>', 'address that receives block rewards')
   .option('--data-dir <path>', 'chain data directory (chain.dat + chain.idx)', 'data')
@@ -22,6 +24,8 @@ const opts = program.opts<{
   p2pPort: string;
   peers: string;
   p2pUrl?: string;
+  public?: boolean;
+  rpcBind?: string;
   defaultSeeds?: boolean;
   mine: boolean;
   minerAddress?: string;
@@ -50,6 +54,8 @@ const node = new SphereNode({
   p2pPort: Number(opts.p2pPort),
   peers,
   advertisedP2pUrl: opts.p2pUrl,
+  publicRpc: Boolean(opts.public),
+  rpcBind: opts.public ? '0.0.0.0' : opts.rpcBind,
   useDefaultSeeds: opts.defaultSeeds !== false,
   mine: Boolean(opts.mine),
   minerAddress: opts.minerAddress,

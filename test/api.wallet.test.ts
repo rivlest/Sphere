@@ -118,6 +118,21 @@ describe('wallet-facing REST API', () => {
     }
   });
 
+  it('rate-limits POST /transactions', async () => {
+    const node = await startTestNode();
+    nodes.push(node);
+    let last = 0;
+    for (let i = 0; i < 13; i++) {
+      const res = await fetch(`http://127.0.0.1:${node.httpPort}/transactions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      last = res.status;
+    }
+    expect(last).toBe(429);
+  });
+
   it('lists address transactions including genesis coinbase', async () => {
     const node = await startTestNode();
     nodes.push(node);

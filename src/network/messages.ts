@@ -13,8 +13,12 @@ export function decodeMessage(raw: string): P2PMessage | null {
       'NEW_BLOCK',
       'NEW_TRANSACTION',
       'QUERY_CHAIN',
+      'QUERY_HEADERS',
+      'QUERY_BODIES',
       'QUERY_PEERS',
       'RESPONSE_CHAIN',
+      'RESPONSE_HEADERS',
+      'RESPONSE_BODIES',
       'RESPONSE_PEERS',
     ];
     if (typeof type !== 'string' || !allowed.includes(type)) return null;
